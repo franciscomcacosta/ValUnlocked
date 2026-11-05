@@ -1,0 +1,7 @@
+{
+  "crons": [
+    { "path": "/api/cron/expire",     "schedule": "0 * * * *" },
+    { "path": "/api/cron/sync-qvsp",  "schedule": "*/2 * * * *" },
+    { "path": "/api/cron/subs",       "schedule": "17 * * * *" }
+  ]
+}

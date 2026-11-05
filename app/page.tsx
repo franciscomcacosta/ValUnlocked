@@ -371,7 +371,12 @@ const TIER_CARDS = [
     priceCents: 999,
     color: "#3b82f6",
     tagline: "The toolkit — cheaper accounts + the method.",
-    perks: ["10% off every account", "Discord + written method", "Email Grabber tool"],
+    perks: [
+      "**10% off** every account",
+      "**€3 monthly credit** (auto-applied)",
+      "Discord + written method",
+      "Email Grabber tool",
+    ],
   },
   {
     tier: "premium" as Tier,
@@ -381,7 +386,12 @@ const TIER_CARDS = [
     color: "#ff4655",
     tagline: "See the drops first.",
     badge: "MOST POPULAR",
-    perks: ["25% off every account", "2-hour early access on new drops", "Custom stock alerts (/snipe)"],
+    perks: [
+      "**20% off** every account",
+      "**€8 monthly credit** (free mid-tier account)",
+      "2-hour early access on new drops",
+      "Custom stock alerts (/snipe)",
+    ],
   },
   {
     tier: "ultra" as Tier,
@@ -391,7 +401,12 @@ const TIER_CARDS = [
     color: "#ffd400",
     tagline: "Let the bot buy for you.",
     badge: "BEST VALUE",
-    perks: ["40% off (up to 50% whales)", "Auto-buy for matching drops", "Priority replacement handling"],
+    perks: [
+      "**30% off** every account",
+      "**€20 monthly credit** (free whale account)",
+      "Auto-buy matching drops",
+      "Priority replacement handling",
+    ],
   },
 ];
 
@@ -492,7 +507,7 @@ function Subscribe({ me, reload }: { me: Me; reload: () => void }) {
                 {t.perks.map((p) => (
                   <div key={p} className="perk">
                     <span className="perk-check" style={{ color: t.color }}>✓</span>
-                    <span>{p}</span>
+                    <span>{renderBold(p)}</span>
                   </div>
                 ))}
               </div>
@@ -576,6 +591,17 @@ function Purchases() {
       </table>
     </>
   );
+}
+
+/** Render **bold** spans as <strong>, leave the rest as text. */
+function renderBold(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((p, i) => {
+    if (p.startsWith("**") && p.endsWith("**")) {
+      return <strong key={i}>{p.slice(2, -2)}</strong>;
+    }
+    return <span key={i}>{p}</span>;
+  });
 }
 
 function errorText(code: string) {

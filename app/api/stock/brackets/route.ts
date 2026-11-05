@@ -8,7 +8,7 @@ import { SKIN_BRACKETS, priceForBracket, type SubTier, type BracketName } from "
 
 export const runtime = "nodejs";
 
-type Row = { region: string; skin_count: number };
+type Row = { region: string; skin_count: number; qvsp_price_cents: number };
 
 const REGIONS = ["EU", "AP", "KR", "LATAM", "BR"] as const;
 
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   // in-process. With ~11k rows and 6 brackets × 5 regions this is trivial.
   let q = db
     .from("qvsp_stock_public")
-    .select("region, skin_count")
+    .select("region, skin_count, qvsp_price_cents")
     .eq("kind", "skinned");
   if (regionFilter) q = q.eq("region", regionFilter);
   const { data, error } = await q;
@@ -48,9 +48,15 @@ export async function GET(req: Request) {
     const region = row.region;
     if (!counts[region]) continue;
     const sc = row.skin_count ?? 0;
+    const cost = row.qvsp_price_cents ?? 0;
     for (const b of SKIN_BRACKETS) {
       if (sc >= b.minSkins && sc <= b.maxSkins) {
-        counts[region][b.name]++;
+        // Only count accounts whose qvsp cost keeps us profitable at this
+        // bracket's price. Over-budget accounts aren't eligible for bracket
+        // orders (they can still sell through Guaranteed Skins).
+        if (cost <= b.maxAcceptableCostCents) {
+          counts[region][b.name]++;
+        }
         break;
       }
     }

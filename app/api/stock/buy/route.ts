@@ -66,6 +66,10 @@ async function handleBracketBuy(opts: { region: string; bracketName: BracketName
     .eq("kind", "skinned")
     .gte("skin_count", bracket.minSkins)
     .lte("skin_count", bracket.maxSkins)
+    // Exclude accounts too expensive for the bracket price to leave a safe
+    // margin at Ultra's max discount. They stay in qvsp_stock and can still
+    // sell via the Guaranteed Skin path (dynamic pricing).
+    .lte("qvsp_price_cents", bracket.maxAcceptableCostCents)
     .is("reserved_order_id", null)
     .is("removed_at", null)
     .eq("claimed", false)

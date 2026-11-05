@@ -14,6 +14,7 @@ import {
   SUB_PRICE_CENTS,
   SUB_PERIOD_DAYS,
   SUB_GRACE_HOURS,
+  SUB_MONTHLY_CREDIT_CENTS,
   formatEur,
   tierLabel,
   type SubTier,
@@ -239,6 +240,19 @@ export async function applyPaidSubInvoice(subInvoiceId: string): Promise<boolean
     })
     .eq("id", sub.id);
 
+  // Grant monthly store credit for the new period. Zero-margin cost (we
+  // already collected the sub fee) but huge perceived value. Granted on
+  // every paid invoice — initial AND each renewal.
+  const creditCents = SUB_MONTHLY_CREDIT_CENTS[inv.tier as SubTier] ?? 0;
+  if (creditCents > 0) {
+    await db.rpc("add_credit", {
+      p_user_id: sub.user_id,
+      p_cents: creditCents,
+      p_reason: `sub_monthly_${inv.tier}`,
+      p_order_id: null,
+    }).catch((e) => console.error("[subs] monthly credit grant failed", e));
+  }
+
   // Grant the tier role.
   if (user?.discord_id) {
     await setTierRole(user.discord_id, inv.tier as SubTier).catch((e) =>
@@ -247,12 +261,15 @@ export async function applyPaidSubInvoice(subInvoiceId: string): Promise<boolean
     await notifyDiscordUser(
       user.discord_id,
       `✅ Your **${tierLabel(inv.tier as SubTier)}** subscription is active until <t:${Math.floor(newPeriodEnd.getTime() / 1000)}:D>.\n` +
-        `Thanks for the support — new perks unlocked in the Discord.`
+        (creditCents > 0 ? `**${formatEur(creditCents)}** monthly store credit added — applied automatically on your next purchase.\n` : "") +
+        `New perks unlocked in the Discord.`
     ).catch((e) => console.error("[subs] DM failed", e));
   }
 
   await logToStaff(
-    `💎 ${inv.purpose === "initial" ? "NEW" : "RENEWED"} **${tierLabel(inv.tier as SubTier)}** · ${formatEur(inv.amount_cents)} · user ${sub.user_id}`
+    `💎 ${inv.purpose === "initial" ? "NEW" : "RENEWED"} **${tierLabel(inv.tier as SubTier)}** · ${formatEur(inv.amount_cents)}` +
+      (creditCents > 0 ? ` (+${formatEur(creditCents)} credit)` : "") +
+      ` · user ${sub.user_id}`
   );
 
   return true;

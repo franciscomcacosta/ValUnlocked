@@ -245,12 +245,16 @@ export async function applyPaidSubInvoice(subInvoiceId: string): Promise<boolean
   // every paid invoice — initial AND each renewal.
   const creditCents = SUB_MONTHLY_CREDIT_CENTS[inv.tier as SubTier] ?? 0;
   if (creditCents > 0) {
-    await db.rpc("add_credit", {
-      p_user_id: sub.user_id,
-      p_cents: creditCents,
-      p_reason: `sub_monthly_${inv.tier}`,
-      p_order_id: null,
-    }).catch((e) => console.error("[subs] monthly credit grant failed", e));
+    try {
+      await db.rpc("add_credit", {
+        p_user_id: sub.user_id,
+        p_cents: creditCents,
+        p_reason: `sub_monthly_${inv.tier}`,
+        p_order_id: null,
+      });
+    } catch (e) {
+      console.error("[subs] monthly credit grant failed", e);
+    }
   }
 
   // Grant the tier role.

@@ -1,14 +1,19 @@
-// POST /api/stock/buy { region, bracket }
-// Reserves a random available qvsp_stock row inside the chosen (region, bracket)
-// for the signed-in user, applies their tier discount, creates a nowpayments
-// invoice. Payment IPN later calls qvsp POST /orders and delivers credentials.
+// POST /api/stock/buy
+//   { region, bracket, useCredit? }           — random pick in skin-range bracket
+//   { region, skin: "<label>", useCredit? }   — cheapest qvsp account with that skin
+//
+// Both paths: reserve a qvsp_stock row, apply tier discount, create a
+// nowpayments invoice. IPN handler calls qvsp POST /orders at payment-final.
 import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
 import {
   SKIN_BRACKETS,
   priceForBracket,
+  FEATURED_SKINS,
+  featuredPriceForUser,
   type BracketName,
   type SubTier,
+  type FeaturedSkin,
 } from "@/lib/pricing";
 import { createInvoice } from "@/lib/nowpayments";
 
@@ -21,19 +26,14 @@ export async function POST(req: Request) {
   if (!session) return Response.json({ error: "auth_required" }, { status: 401 });
 
   const body = (await req.json().catch(() => null)) as
-    | { region?: string; bracket?: string; useCredit?: boolean }
+    | { region?: string; bracket?: string; skin?: string; useCredit?: boolean }
     | null;
   const region = body?.region?.toUpperCase();
-  const bracketName = body?.bracket as BracketName | undefined;
-  const useCredit = body?.useCredit !== false; // default true
-
   if (!region || !REGIONS.has(region)) {
     return Response.json({ error: "invalid_region" }, { status: 400 });
   }
-  const bracket = SKIN_BRACKETS.find((b) => b.name === bracketName);
-  if (!bracket) return Response.json({ error: "invalid_bracket" }, { status: 400 });
 
-  // Pull the user's active tier for pricing.
+  // Get the user's tier once.
   const { data: sub } = await db
     .from("subscriptions")
     .select("tier")
@@ -41,15 +41,28 @@ export async function POST(req: Request) {
     .in("status", ["active", "grace"])
     .maybeSingle();
   const tier = (sub?.tier ?? null) as SubTier | null;
-  const pricing = priceForBracket(bracket.name, tier);
 
-  // Pick a random available qvsp row matching region + bracket. We grab a
-  // small candidate set first to randomize, then reserve one via SKIP LOCKED
-  // in a single update statement so concurrent buyers don't collide.
+  // Branch: bracket OR skin
+  if (body?.skin) {
+    return handleFeaturedSkinBuy({ region, skinLabel: body.skin, useCredit: body.useCredit !== false, userId: session.uid, tier });
+  }
+  if (body?.bracket) {
+    return handleBracketBuy({ region, bracketName: body.bracket as BracketName, useCredit: body.useCredit !== false, userId: session.uid, tier });
+  }
+  return Response.json({ error: "bracket_or_skin_required" }, { status: 400 });
+}
+
+// ─── Bracket (random in range) ─────────────────────────────────
+
+async function handleBracketBuy(opts: { region: string; bracketName: BracketName; useCredit: boolean; userId: string; tier: SubTier | null }): Promise<Response> {
+  const bracket = SKIN_BRACKETS.find((b) => b.name === opts.bracketName);
+  if (!bracket) return Response.json({ error: "invalid_bracket" }, { status: 400 });
+  const pricing = priceForBracket(bracket.name, opts.tier);
+
   const { data: candidates, error: cErr } = await db
     .from("qvsp_stock")
     .select("qvsp_id")
-    .eq("region", region)
+    .eq("region", opts.region)
     .eq("kind", "skinned")
     .gte("skin_count", bracket.minSkins)
     .lte("skin_count", bracket.maxSkins)
@@ -58,44 +71,96 @@ export async function POST(req: Request) {
     .eq("claimed", false)
     .limit(50);
   if (cErr) return Response.json({ error: cErr.message }, { status: 500 });
-  if (!candidates || candidates.length === 0) {
-    return Response.json({ error: "out_of_stock" }, { status: 409 });
-  }
+  if (!candidates?.length) return Response.json({ error: "out_of_stock" }, { status: 409 });
 
-  // Create a pending order first so we have an id to reserve against.
+  const productId = await resolveBracketProductId(bracket.name);
+  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+  return reserveAndInvoice({
+    userId: opts.userId,
+    productId,
+    region: opts.region,
+    candidates: shuffled.map((c) => c.qvsp_id),
+    publicCents: pricing.publicCents,
+    finalCents: pricing.finalCents,
+    useCredit: opts.useCredit,
+    description: `Valorant account · ${bracket.label} · ${opts.region}`,
+  });
+}
+
+// ─── Featured skin (cheapest with that skin) ───────────────────
+
+async function handleFeaturedSkinBuy(opts: { region: string; skinLabel: string; useCredit: boolean; userId: string; tier: SubTier | null }): Promise<Response> {
+  const skin = FEATURED_SKINS.find((s) => s.label === opts.skinLabel) as FeaturedSkin | undefined;
+  if (!skin) return Response.json({ error: "invalid_skin" }, { status: 400 });
+
+  // Grab the CHEAPEST available qvsp rows that contain this skin. Reserve
+  // in cheapest-first order so we always lock the one the display price
+  // was based on.
+  const { data: candidates, error: cErr } = await db
+    .from("qvsp_stock")
+    .select("qvsp_id, qvsp_price_cents")
+    .eq("region", opts.region)
+    .eq("kind", "skinned")
+    .overlaps("skins", skin.matchAny)
+    .is("reserved_order_id", null)
+    .is("removed_at", null)
+    .eq("claimed", false)
+    .order("qvsp_price_cents", { ascending: true })
+    .limit(10);
+  if (cErr) return Response.json({ error: cErr.message }, { status: 500 });
+  if (!candidates?.length) return Response.json({ error: "skin_unavailable" }, { status: 409 });
+
+  const cheapest = candidates[0].qvsp_price_cents as number;
+  const pricing = featuredPriceForUser(cheapest, skin.minPriceCents, opts.tier);
+  const productId = await resolveFeaturedSkinProductId(skin.label);
+
+  return reserveAndInvoice({
+    userId: opts.userId,
+    productId,
+    region: opts.region,
+    candidates: candidates.map((c) => c.qvsp_id),
+    publicCents: pricing.publicCents,
+    finalCents: pricing.finalCents,
+    useCredit: opts.useCredit,
+    description: `Valorant account · guaranteed ${skin.label} · ${opts.region}`,
+  });
+}
+
+// ─── Shared reserve + invoice flow ─────────────────────────────
+
+interface ReserveArgs {
+  userId: string;
+  productId: string;
+  region: string;
+  candidates: string[];
+  publicCents: number;
+  finalCents: number;
+  useCredit: boolean;
+  description: string;
+}
+
+async function reserveAndInvoice(args: ReserveArgs): Promise<Response> {
   const { data: order, error: oErr } = await db
     .from("orders")
     .insert({
-      user_id: session.uid,
-      // We don't have a products row for a qvsp bracket; leave product_id null
-      // via a bracket-synthetic placeholder. The existing schema requires
-      // product_id, so this requires either a migration OR using one of the
-      // pre-seeded 'qvsp' products you created in admin. To keep this PR
-      // non-breaking we require the admin to have created a placeholder
-      // product once named "qvsp-<bracket>". Fallback error below guides you.
-      product_id: await resolveBracketProductId(bracket.name),
-      price_cents: pricing.publicCents,
+      user_id: args.userId,
+      product_id: args.productId,
+      price_cents: args.publicCents,
       credit_used_cents: 0,
-      charge_cents: pricing.finalCents,
+      charge_cents: args.finalCents,
       currency: "eur",
     })
     .select("id")
     .single();
   if (oErr || !order) {
-    return Response.json(
-      { error: "order_create_failed", detail: oErr?.message },
-      { status: 500 }
-    );
+    return Response.json({ error: "order_create_failed", detail: oErr?.message }, { status: 500 });
   }
 
-  // Try to reserve each candidate until one succeeds (race-free via the
-  // existing reserve_qvsp_stock SQL function from migration 002).
-  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
   let reservedQvspId: string | null = null;
-  for (const c of shuffled) {
+  for (const id of args.candidates) {
     const { data: picked } = await db.rpc("reserve_qvsp_stock", {
       p_order_id: order.id,
-      p_qvsp_id: c.qvsp_id,
+      p_qvsp_id: id,
     });
     if (picked) {
       reservedQvspId = picked as string;
@@ -107,27 +172,22 @@ export async function POST(req: Request) {
     return Response.json({ error: "out_of_stock" }, { status: 409 });
   }
 
-  // Apply store credit if asked and present.
+  // Apply store credit.
   let credit = 0;
-  let charge = pricing.finalCents;
-  if (useCredit) {
-    const { data: user } = await db
-      .from("users")
-      .select("credit_cents")
-      .eq("id", session.uid)
-      .single();
-    credit = Math.min(user?.credit_cents ?? 0, pricing.finalCents);
-    charge = pricing.finalCents - credit;
+  let charge = args.finalCents;
+  if (args.useCredit) {
+    const { data: user } = await db.from("users").select("credit_cents").eq("id", args.userId).single();
+    credit = Math.min(user?.credit_cents ?? 0, args.finalCents);
+    charge = args.finalCents - credit;
     if (credit > 0) {
       const { data: spent } = await db.rpc("spend_credit", {
-        p_user_id: session.uid,
+        p_user_id: args.userId,
         p_cents: credit,
         p_order_id: order.id,
       });
       if (!spent) {
-        // Credit couldn't be applied — fall back to full price, don't fail.
         credit = 0;
-        charge = pricing.finalCents;
+        charge = args.finalCents;
       } else {
         await db
           .from("orders")
@@ -137,37 +197,24 @@ export async function POST(req: Request) {
     }
   }
 
-  // Credit fully covered the order → deliver immediately.
   if (charge === 0) {
-    // Fulfilment logic is handled by IPN handler for qvsp rows; call it
-    // directly here with a synthetic "paid" flag. For simplicity we leave
-    // the order as 'paid' and let the next fulfilment cron pick it up — OR
-    // call fulfilOrder() directly if you want instant delivery (uncomment
-    // when the qvsp-aware fulfilment path lands).
     await db.from("orders").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", order.id);
-    return Response.json({
-      ok: true,
-      orderId: order.id,
-      invoiceUrl: null,
-      deliveredByCredit: true,
-    });
+    return Response.json({ ok: true, orderId: order.id, invoiceUrl: null, deliveredByCredit: true });
   }
 
-  // Otherwise, create a crypto invoice.
   try {
     const invoice = await createInvoice({
       orderId: order.id,
       priceCents: charge,
       currency: "eur",
-      description: `Valorant account · ${bracket.label} · ${region}`,
+      description: args.description,
     });
     await db.from("orders").update({ np_invoice_id: invoice.id }).eq("id", order.id);
     return Response.json({
       ok: true,
       orderId: order.id,
       invoiceUrl: invoice.invoice_url,
-      bracket: bracket.label,
-      region,
+      region: args.region,
       amountCents: charge,
     });
   } catch (e) {
@@ -176,7 +223,7 @@ export async function POST(req: Request) {
     await db.rpc("release_qvsp_stock", { p_order_id: order.id });
     if (credit > 0) {
       await db.rpc("add_credit", {
-        p_user_id: session.uid,
+        p_user_id: args.userId,
         p_cents: credit,
         p_reason: "order_cancelled",
         p_order_id: order.id,
@@ -186,17 +233,11 @@ export async function POST(req: Request) {
   }
 }
 
-// We synthesize a placeholder product row per bracket on first use so the
-// existing schema's product_id FK is satisfied without a migration.
-// These rows are inactive and invisible to the admin shop — they exist only
-// for the FK.
+// ─── Placeholder product rows (satisfies the products.id FK) ───
+
 async function resolveBracketProductId(bracket: BracketName): Promise<string> {
   const slug = `qvsp-${bracket}`;
-  const { data: existing } = await db
-    .from("products")
-    .select("id")
-    .eq("slug", slug)
-    .maybeSingle();
+  const { data: existing } = await db.from("products").select("id").eq("slug", slug).maybeSingle();
   if (existing?.id) return existing.id;
   const label = SKIN_BRACKETS.find((b) => b.name === bracket)!.label;
   const { data: created, error } = await db
@@ -205,10 +246,31 @@ async function resolveBracketProductId(bracket: BracketName): Promise<string> {
       slug,
       name: `QVSP · ${label}`,
       region: "QVSP",
-      price_cents: 100,          // placeholder; real price is per-order
+      price_cents: 100,
       currency: "eur",
-      active: false,             // hidden from admin shop
+      active: false,
       description: "Internal placeholder for QVSP bracket orders.",
+    })
+    .select("id")
+    .single();
+  if (error || !created) throw new Error(`placeholder product create failed: ${error?.message}`);
+  return created.id;
+}
+
+async function resolveFeaturedSkinProductId(skinLabel: string): Promise<string> {
+  const slug = `qvsp-skin-${skinLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const { data: existing } = await db.from("products").select("id").eq("slug", slug).maybeSingle();
+  if (existing?.id) return existing.id;
+  const { data: created, error } = await db
+    .from("products")
+    .insert({
+      slug,
+      name: `QVSP · ${skinLabel}`,
+      region: "QVSP",
+      price_cents: 100,
+      currency: "eur",
+      active: false,
+      description: `Internal placeholder for guaranteed ${skinLabel} orders.`,
     })
     .select("id")
     .single();

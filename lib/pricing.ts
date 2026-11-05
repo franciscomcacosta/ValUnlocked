@@ -95,3 +95,79 @@ export const TIER_COLOR: Record<SubTier, number> = {
   premium:  0xff4655,
   ultra:    0xffd400,
 };
+
+// ─── Featured ("guaranteed") skins ──────────────────────────
+// Named hunted skins. Buyer picks one, backend reserves the cheapest
+// available qvsp account that contains that skin in its skins[] array.
+// Dynamic price = cheapest-qvsp-cost × markupMultiplier, floor-rounded
+// to the nearest €1, then tier discount applied.
+
+export interface FeaturedSkin {
+  // Must match qvsp's `skins` array entries EXACTLY (case-sensitive).
+  // We accept several spellings for skins with level-suffixes qvsp appends
+  // (e.g. "Reaver Vandal" vs "Reaver Vandal (5 Levels)").
+  matchAny: string[];
+  // Pretty name for the card.
+  label: string;
+  // Weapon type, shown in UI subtitle.
+  weapon: string;
+  // Minimum sell price in cents, even if 2.5× the floor is lower.
+  // Prevents giving Reaver Vandal away at €7 if a cheap stub appears.
+  minPriceCents: number;
+}
+
+// Multiplier applied to the cheapest qvsp cost for this skin.
+export const FEATURED_MARKUP_MULTIPLIER = 2.5;
+
+export const FEATURED_SKINS: FeaturedSkin[] = [
+  { matchAny: ["Reaver Vandal", "Reaver Vandal (4 Levels)", "Reaver Vandal (5 Levels)"], label: "Reaver Vandal", weapon: "Vandal", minPriceCents: 2499 },
+  { matchAny: ["Prime Vandal", "Prime Vandal (4 Levels)"], label: "Prime Vandal", weapon: "Vandal", minPriceCents: 1999 },
+  { matchAny: ["Oni Vandal", "Oni Vandal (4 Levels)"], label: "Oni Vandal", weapon: "Vandal", minPriceCents: 1999 },
+  { matchAny: ["Elderflame Vandal", "Elderflame Vandal (4 Levels)"], label: "Elderflame Vandal", weapon: "Vandal", minPriceCents: 2299 },
+  { matchAny: ["Prelude to Chaos Vandal", "Prelude to Chaos Vandal (4 Levels)"], label: "Prelude to Chaos Vandal", weapon: "Vandal", minPriceCents: 2499 },
+  { matchAny: ["RGX 11z Pro Vandal", "RGX 11z Pro Vandal (5 Levels)"], label: "RGX 11z Pro Vandal", weapon: "Vandal", minPriceCents: 1799 },
+  { matchAny: ["Ion Phantom", "Ion Phantom (4 Levels)"], label: "Ion Phantom", weapon: "Phantom", minPriceCents: 1799 },
+  { matchAny: ["Sovereign Ghost", "Sovereign Ghost (4 Levels)"], label: "Sovereign Ghost", weapon: "Ghost", minPriceCents: 1499 },
+  { matchAny: ["Prime Ghost", "Prime Ghost (4 Levels)"], label: "Prime Ghost", weapon: "Ghost", minPriceCents: 1499 },
+  { matchAny: ["Reaver Operator", "Reaver Operator (4 Levels)"], label: "Reaver Operator", weapon: "Operator", minPriceCents: 1999 },
+  { matchAny: ["Oni Operator", "Oni Operator (4 Levels)"], label: "Oni Operator", weapon: "Operator", minPriceCents: 1999 },
+  { matchAny: ["Araxys Operator", "Araxys Operator (4 Levels)"], label: "Araxys Operator", weapon: "Operator", minPriceCents: 2499 },
+];
+
+export interface FeaturedSkinPrice {
+  skin: FeaturedSkin;
+  available: number;
+  cheapestQvspCents: number | null;
+  publicCents: number;         // computed sell price before tier discount
+  finalCents: number;          // after tier discount
+  savingsCents: number;
+  discountPct: number;
+}
+
+/** Compute the markup public price for a given cheapest-cost floor. */
+export function markupPublicPrice(cheapestQvspCents: number, minPriceCents: number): number {
+  const marked = Math.ceil((cheapestQvspCents * FEATURED_MARKUP_MULTIPLIER) / 100) * 100;
+  return Math.max(marked, minPriceCents);
+}
+
+/**
+ * Apply a tier discount to a featured-skin public price. Uses the same
+ * per-tier-per-bracket matrix as skin ranges by mapping the public cents
+ * back to the nearest bracket. Falls back to top-bracket rates for prices
+ * above the whale bracket.
+ */
+export function featuredPriceForUser(cheapestQvspCents: number, minPriceCents: number, tier: SubTier | null): {
+  publicCents: number;
+  finalCents: number;
+  savingsCents: number;
+  discountPct: number;
+} {
+  const publicCents = markupPublicPrice(cheapestQvspCents, minPriceCents);
+  if (!tier) return { publicCents, finalCents: publicCents, savingsCents: 0, discountPct: 0 };
+  // Use the highest-bracket discount (whale tier) for featured skins; buyers
+  // choose named skins at a premium so apply the top discount for subs too.
+  const whaleDiscount: Record<SubTier, number> = { standard: 0.10, premium: 0.30, ultra: 0.50 };
+  const pct = whaleDiscount[tier];
+  const final = Math.floor(publicCents * (1 - pct));
+  return { publicCents, finalCents: final, savingsCents: publicCents - final, discountPct: pct };
+}

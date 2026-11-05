@@ -34,6 +34,18 @@ interface BracketRow {
   price: { publicCents: number; finalCents: number; discountPct: number; savingsCents: number };
 }
 
+interface FeaturedSkinRow {
+  key: string;
+  label: string;
+  weapon: string;
+  available: number;
+  cheapestQvspCents: number | null;
+  publicCents: number;
+  finalCents: number;
+  savingsCents: number;
+  discountPct: number;
+}
+
 interface Order {
   id: string;
   status: string;
@@ -146,19 +158,30 @@ function Topbar({ me }: { me: Me }) {
 function Stock({ me }: { me: Me }) {
   const [region, setRegion] = useState<Region>("EU");
   const [brackets, setBrackets] = useState<BracketRow[] | null>(null);
+  const [featured, setFeatured] = useState<FeaturedSkinRow[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
-  const load = useCallback(() => {
-    setBrackets(null);
+  const loadBrackets = useCallback(() => {
     fetch("/api/stock/brackets")
       .then((r) => r.json())
       .then((d) => setBrackets(d.brackets ?? []));
   }, []);
 
+  const loadFeatured = useCallback((r: Region) => {
+    setFeatured(null);
+    fetch(`/api/stock/featured-skins?region=${r}`)
+      .then((res) => res.json())
+      .then((d) => setFeatured(d.skins ?? []));
+  }, []);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    loadBrackets();
+  }, [loadBrackets]);
+
+  useEffect(() => {
+    loadFeatured(region);
+  }, [region, loadFeatured]);
 
   const totalsByRegion: Record<string, number> = {};
   for (const row of brackets ?? []) {
@@ -167,8 +190,8 @@ function Stock({ me }: { me: Me }) {
 
   const visible = (brackets ?? []).filter((b) => b.region === region);
 
-  async function buy(bracket: string) {
-    setBusy(bracket);
+  async function buyBracket(bracket: string) {
+    setBusy(`b:${bracket}`);
     setErr("");
     const res = await fetch("/api/stock/buy", {
       method: "POST",
@@ -177,10 +200,22 @@ function Stock({ me }: { me: Me }) {
     });
     const data = await res.json();
     setBusy(null);
-    if (!res.ok) {
-      setErr(data.error ?? "something went wrong");
-      return;
-    }
+    if (!res.ok) { setErr(data.error ?? "something went wrong"); return; }
+    if (data.invoiceUrl) window.location.href = data.invoiceUrl;
+    else window.location.href = `/orders/${data.orderId}`;
+  }
+
+  async function buySkin(label: string) {
+    setBusy(`s:${label}`);
+    setErr("");
+    const res = await fetch("/api/stock/buy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ region, skin: label, useCredit: true }),
+    });
+    const data = await res.json();
+    setBusy(null);
+    if (!res.ok) { setErr(data.error ?? "something went wrong"); return; }
     if (data.invoiceUrl) window.location.href = data.invoiceUrl;
     else window.location.href = `/orders/${data.orderId}`;
   }
@@ -243,10 +278,70 @@ function Stock({ me }: { me: Me }) {
                 </div>
                 <button
                   className="btn sm"
-                  disabled={b.available === 0 || busy === b.bracket}
-                  onClick={() => buy(b.bracket)}
+                  disabled={b.available === 0 || busy === `b:${b.bracket}`}
+                  onClick={() => buyBracket(b.bracket)}
                 >
-                  {busy === b.bracket ? "…" : b.available === 0 ? "SOLD OUT" : "BUY"}
+                  {busy === `b:${b.bracket}` ? "…" : b.available === 0 ? "SOLD OUT" : "BUY"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="muted" style={{ fontSize: 12, marginTop: 16, marginBottom: 32, textAlign: "center" }}>
+        A random full-access account from the chosen bracket is delivered after payment confirms on-chain.
+        All accounts come with the original email so you can lock them down.
+      </p>
+
+      {/* ── FEATURED (guaranteed) skins ───────────────────── */}
+      <div className="section-label" style={{ marginTop: 8 }}>Guaranteed Skin · Named Drops</div>
+
+      {featured === null ? (
+        <p className="muted" style={{ padding: 40, textAlign: "center" }}>Loading featured skins…</p>
+      ) : featured.every((s) => s.available === 0) ? (
+        <p className="muted" style={{ padding: 40, textAlign: "center" }}>
+          No featured-skin inventory in {regionLabel(region)} right now.
+        </p>
+      ) : (
+        <div className="grid">
+          {featured.map((s) => (
+            <div key={s.key} className={`stock-card ${s.available === 0 ? "sold-out" : ""}`}>
+              <span className="region-badge">{region}</span>
+              <div>
+                <div className="bracket-title">{s.weapon}</div>
+                <div className="bracket-name" style={{ fontSize: 18 }}>{s.label}</div>
+              </div>
+              <div className="stat-row">
+                <span className="label">Matching stock</span>
+                <span className="value">{s.available}</span>
+              </div>
+              <div className="stat-row">
+                <span className="label">Delivery</span>
+                <span className="value" style={{ color: "var(--ok)" }}>Instant</span>
+              </div>
+              <div className="price-row">
+                <div>
+                  {s.available > 0 ? (
+                    <>
+                      {s.discountPct > 0 && (
+                        <span className="price-strike">{eur(s.publicCents)}</span>
+                      )}
+                      <span className="price">{eur(s.finalCents)}</span>
+                      {s.discountPct > 0 && (
+                        <span className="discount-badge">-{Math.round(s.discountPct * 100)}%</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="price muted" style={{ fontSize: 16 }}>—</span>
+                  )}
+                </div>
+                <button
+                  className="btn sm"
+                  disabled={s.available === 0 || busy === `s:${s.label}`}
+                  onClick={() => buySkin(s.label)}
+                >
+                  {busy === `s:${s.label}` ? "…" : s.available === 0 ? "N/A" : "BUY"}
                 </button>
               </div>
             </div>
@@ -255,8 +350,8 @@ function Stock({ me }: { me: Me }) {
       )}
 
       <p className="muted" style={{ fontSize: 12, marginTop: 16, textAlign: "center" }}>
-        A random full-access account from the chosen bracket is delivered after payment confirms on-chain.
-        All accounts come with the original email so you can lock them down.
+        Price is based on the cheapest available account that has the skin, and updates as stock turns over.
+        You get a full-access account with the named skin guaranteed.
       </p>
     </>
   );

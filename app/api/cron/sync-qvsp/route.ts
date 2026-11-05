@@ -9,7 +9,15 @@
 
 import { db } from "@/lib/supabase";
 import { getAllStock, normalizeRank, qvspPriceToCents, QvspApiError } from "@/lib/qvsp";
-import { publicPriceCents } from "@/lib/pricing";
+import { bracketForSkinCount, SKIN_BRACKETS } from "@/lib/pricing";
+
+// Mirror public_price_cents on each row so admin queries don't have to
+// recompute. For skinned items it's the skin-bracket price; ranked items
+// (which we don't show in v1) just get the lowest bracket as a placeholder.
+function computePublicPriceCents(kind: string, skinCount: number): number {
+  if (kind === "skinned") return bracketForSkinCount(skinCount).publicPriceCents;
+  return SKIN_BRACKETS[0].publicPriceCents;
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -53,7 +61,7 @@ async function runSync() {
       rank: item.rank,
       rank_normalized: normalizeRank(item.rank),
       qvsp_price_cents: qvspCents,
-      public_price_cents: publicPriceCents(qvspCents),
+      public_price_cents: computePublicPriceCents(item.kind, item.skin_count ?? 0),
       // Ranked items omit these fields — they're sold on rank, not loot.
       skin_count: item.skin_count ?? 0,
       skins: item.skins ?? [],

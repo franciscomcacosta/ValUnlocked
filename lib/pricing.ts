@@ -25,21 +25,25 @@ export interface SkinBracket {
 // maxAcceptableCostCents filters out qvsp accounts too expensive to sell
 // at the bracket price without losing money at Ultra 30% off.
 //
-//                                                       Ultra-30%  min-margin
-//                                       public   max cost  pays     at max cost
-//   1–25        €4.99     €1.50          €3.49    €1.99
-//   26–50       €6.99     €2.80          €4.89    €2.09
-//   51–100     €11.99     €6.40          €8.39    €1.99
-//   101–150    €17.99    €10.60         €12.59    €1.99
-//   151–200    €22.99    €14.00         €16.09    €2.09
-//   200+       €27.99    €17.60         €19.59    €1.99
+// maxAcceptableCostCents is tuned to (public × 0.7) − 50 cents, giving us
+// at least €0.50 margin even on an Ultra 30%-off sale. Any account costing
+// more than this is excluded from bracket random-pick (would be unprofitable)
+// but still sells via Guaranteed Skins where pricing adjusts dynamically.
+//
+//                                   public   max cost   Ultra pays   min margin
+//   1–25            €4.99     €2.99      €3.49        €0.50
+//   26–50           €6.99     €4.39      €4.89        €0.50
+//   51–100         €11.99     €7.89      €8.39        €0.50
+//   101–150        €17.99    €12.09     €12.59        €0.50
+//   151–200        €22.99    €15.59     €16.09        €0.50
+//   200+           €27.99    €19.09     €19.59        €0.50
 export const SKIN_BRACKETS: SkinBracket[] = [
-  { name: "s_1_25",     label: "1–25 skins",    minSkins: 1,   maxSkins: 25,       publicPriceCents:  499, maxAcceptableCostCents:  150 },
-  { name: "s_26_50",    label: "26–50 skins",   minSkins: 26,  maxSkins: 50,       publicPriceCents:  699, maxAcceptableCostCents:  280 },
-  { name: "s_51_100",   label: "51–100 skins",  minSkins: 51,  maxSkins: 100,      publicPriceCents: 1199, maxAcceptableCostCents:  640 },
-  { name: "s_101_150",  label: "101–150 skins", minSkins: 101, maxSkins: 150,      publicPriceCents: 1799, maxAcceptableCostCents: 1060 },
-  { name: "s_151_200",  label: "151–200 skins", minSkins: 151, maxSkins: 200,      publicPriceCents: 2299, maxAcceptableCostCents: 1400 },
-  { name: "s_200_plus", label: "200+ skins",    minSkins: 201, maxSkins: 99999,    publicPriceCents: 2799, maxAcceptableCostCents: 1760 },
+  { name: "s_1_25",     label: "1–25 skins",    minSkins: 1,   maxSkins: 25,       publicPriceCents:  499, maxAcceptableCostCents:  299 },
+  { name: "s_26_50",    label: "26–50 skins",   minSkins: 26,  maxSkins: 50,       publicPriceCents:  699, maxAcceptableCostCents:  439 },
+  { name: "s_51_100",   label: "51–100 skins",  minSkins: 51,  maxSkins: 100,      publicPriceCents: 1199, maxAcceptableCostCents:  789 },
+  { name: "s_101_150",  label: "101–150 skins", minSkins: 101, maxSkins: 150,      publicPriceCents: 1799, maxAcceptableCostCents: 1209 },
+  { name: "s_151_200",  label: "151–200 skins", minSkins: 151, maxSkins: 200,      publicPriceCents: 2299, maxAcceptableCostCents: 1559 },
+  { name: "s_200_plus", label: "200+ skins",    minSkins: 201, maxSkins: 99999,    publicPriceCents: 2799, maxAcceptableCostCents: 1909 },
 ];
 
 // Monthly subscription prices.

@@ -33,11 +33,15 @@ export async function GET(req: Request) {
   const results = await Promise.all(
     FEATURED_SKINS.map(async (skin) => {
       const { data, error } = await db
-        .from("qvsp_stock_public")
+        .from("qvsp_stock")
         .select("qvsp_price_cents")
         .eq("region", region)
         .eq("kind", "skinned")
-        .overlaps("skins", skin.matchAny);
+        .overlaps("skins", skin.matchAny)
+        .is("reserved_order_id", null)
+        .is("removed_at", null)
+        .eq("claimed", false)
+        .lte("public_at", new Date().toISOString());
       if (error || !data || data.length === 0) {
         return {
           key: skin.label,

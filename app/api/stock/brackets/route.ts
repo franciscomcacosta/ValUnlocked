@@ -31,10 +31,17 @@ export async function GET(req: Request) {
   // Pull available skinned stock, project only what we need for bucketing.
   // Supabase JS can't GROUP BY arbitrary expressions, so we do bucket counts
   // in-process. With ~11k rows and 6 brackets × 5 regions this is trivial.
+  // Query the base table directly (not the public view) because we need
+  // qvsp_price_cents for the cost-ceiling filter, and the public view hides
+  // cost by design. Cost never reaches the client — only aggregated counts.
   let q = db
-    .from("qvsp_stock_public")
+    .from("qvsp_stock")
     .select("region, skin_count, qvsp_price_cents")
-    .eq("kind", "skinned");
+    .eq("kind", "skinned")
+    .is("reserved_order_id", null)
+    .is("removed_at", null)
+    .eq("claimed", false)
+    .lte("public_at", new Date().toISOString());
   if (regionFilter) q = q.eq("region", regionFilter);
   const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });

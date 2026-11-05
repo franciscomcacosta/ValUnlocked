@@ -14,15 +14,16 @@ export interface SkinBracket {
   publicPriceCents: number;
 }
 
-// Skin-count brackets. Prices tuned so the lowest bracket is impulse-buy
-// cheap and the top is still way under eneba/g2g for a 200+ skin account.
+// Skin-count brackets. Low public prices — accounts are the acquisition
+// funnel; subscriptions are where the recurring revenue comes from. Margin
+// per sale is intentionally flat (~€2–5) across every bracket.
 export const SKIN_BRACKETS: SkinBracket[] = [
-  { name: "s_1_25",     label: "1–25 skins",    minSkins: 1,   maxSkins: 25,       publicPriceCents:  499 },
-  { name: "s_26_50",    label: "26–50 skins",   minSkins: 26,  maxSkins: 50,       publicPriceCents:  999 },
-  { name: "s_51_100",   label: "51–100 skins",  minSkins: 51,  maxSkins: 100,      publicPriceCents: 1699 },
-  { name: "s_101_150",  label: "101–150 skins", minSkins: 101, maxSkins: 150,      publicPriceCents: 2499 },
-  { name: "s_151_200",  label: "151–200 skins", minSkins: 151, maxSkins: 200,      publicPriceCents: 3499 },
-  { name: "s_200_plus", label: "200+ skins",    minSkins: 201, maxSkins: 99999,    publicPriceCents: 4499 },
+  { name: "s_1_25",     label: "1–25 skins",    minSkins: 1,   maxSkins: 25,       publicPriceCents:  299 },
+  { name: "s_26_50",    label: "26–50 skins",   minSkins: 26,  maxSkins: 50,       publicPriceCents:  499 },
+  { name: "s_51_100",   label: "51–100 skins",  minSkins: 51,  maxSkins: 100,      publicPriceCents:  799 },
+  { name: "s_101_150",  label: "101–150 skins", minSkins: 101, maxSkins: 150,      publicPriceCents: 1199 },
+  { name: "s_151_200",  label: "151–200 skins", minSkins: 151, maxSkins: 200,      publicPriceCents: 1499 },
+  { name: "s_200_plus", label: "200+ skins",    minSkins: 201, maxSkins: 99999,    publicPriceCents: 1799 },
 ];
 
 // Monthly subscription prices.
@@ -32,11 +33,13 @@ export const SUB_PRICE_CENTS: Record<SubTier, number> = {
   ultra:    5999,
 };
 
-// Tier discounts per bracket (0 = no discount, 1 = free).
+// Tier discounts per bracket. Flat 5/10/15 across all brackets — subs sell
+// primarily on FEATURES (early access, /snipe, auto-buy, email grabber), not
+// on price. The small % keeps per-sale margin positive at every tier.
 const TIER_DISCOUNT: Record<SubTier, Record<BracketName, number>> = {
-  standard: { s_1_25: 0.05, s_26_50: 0.05, s_51_100: 0.08, s_101_150: 0.10, s_151_200: 0.10, s_200_plus: 0.10 },
-  premium:  { s_1_25: 0.10, s_26_50: 0.12, s_51_100: 0.18, s_101_150: 0.22, s_151_200: 0.25, s_200_plus: 0.30 },
-  ultra:    { s_1_25: 0.15, s_26_50: 0.20, s_51_100: 0.30, s_101_150: 0.35, s_151_200: 0.40, s_200_plus: 0.50 },
+  standard: { s_1_25: 0.05, s_26_50: 0.05, s_51_100: 0.05, s_101_150: 0.05, s_151_200: 0.05, s_200_plus: 0.05 },
+  premium:  { s_1_25: 0.10, s_26_50: 0.10, s_51_100: 0.10, s_101_150: 0.10, s_151_200: 0.10, s_200_plus: 0.10 },
+  ultra:    { s_1_25: 0.15, s_26_50: 0.15, s_51_100: 0.15, s_101_150: 0.15, s_151_200: 0.15, s_200_plus: 0.15 },
 };
 
 // Subscription period + grace + drop-embargo settings.
@@ -116,22 +119,27 @@ export interface FeaturedSkin {
   minPriceCents: number;
 }
 
-// Multiplier applied to the cheapest qvsp cost for this skin.
-export const FEATURED_MARKUP_MULTIPLIER = 2.5;
+// Featured-skin pricing model: FLAT markup, not a multiplier.
+// public_price = max(qvsp_cost + FEATURED_FLAT_MARKUP, per-skin minPrice)
+// This keeps margin consistent (~€3-5) whether the underlying account was
+// cheap or whale-tier. Subs are where the real revenue comes from; account
+// margins stay predictable and small.
+export const FEATURED_FLAT_MARKUP_CENTS = 500;    // €5 added to qvsp cost
+export const FEATURED_MAX_TIER_DISCOUNT = 0.15;   // Ultra cap (matches brackets)
 
 export const FEATURED_SKINS: FeaturedSkin[] = [
-  { matchAny: ["Reaver Vandal", "Reaver Vandal (4 Levels)", "Reaver Vandal (5 Levels)"], label: "Reaver Vandal", weapon: "Vandal", minPriceCents: 2499 },
-  { matchAny: ["Prime Vandal", "Prime Vandal (4 Levels)"], label: "Prime Vandal", weapon: "Vandal", minPriceCents: 1999 },
-  { matchAny: ["Oni Vandal", "Oni Vandal (4 Levels)"], label: "Oni Vandal", weapon: "Vandal", minPriceCents: 1999 },
-  { matchAny: ["Elderflame Vandal", "Elderflame Vandal (4 Levels)"], label: "Elderflame Vandal", weapon: "Vandal", minPriceCents: 2299 },
-  { matchAny: ["Prelude to Chaos Vandal", "Prelude to Chaos Vandal (4 Levels)"], label: "Prelude to Chaos Vandal", weapon: "Vandal", minPriceCents: 2499 },
-  { matchAny: ["RGX 11z Pro Vandal", "RGX 11z Pro Vandal (5 Levels)"], label: "RGX 11z Pro Vandal", weapon: "Vandal", minPriceCents: 1799 },
-  { matchAny: ["Ion Phantom", "Ion Phantom (4 Levels)"], label: "Ion Phantom", weapon: "Phantom", minPriceCents: 1799 },
-  { matchAny: ["Sovereign Ghost", "Sovereign Ghost (4 Levels)"], label: "Sovereign Ghost", weapon: "Ghost", minPriceCents: 1499 },
-  { matchAny: ["Prime Ghost", "Prime Ghost (4 Levels)"], label: "Prime Ghost", weapon: "Ghost", minPriceCents: 1499 },
-  { matchAny: ["Reaver Operator", "Reaver Operator (4 Levels)"], label: "Reaver Operator", weapon: "Operator", minPriceCents: 1999 },
-  { matchAny: ["Oni Operator", "Oni Operator (4 Levels)"], label: "Oni Operator", weapon: "Operator", minPriceCents: 1999 },
-  { matchAny: ["Araxys Operator", "Araxys Operator (4 Levels)"], label: "Araxys Operator", weapon: "Operator", minPriceCents: 2499 },
+  { matchAny: ["Reaver Vandal", "Reaver Vandal (4 Levels)", "Reaver Vandal (5 Levels)"], label: "Reaver Vandal", weapon: "Vandal", minPriceCents: 1499 },
+  { matchAny: ["Prime Vandal", "Prime Vandal (4 Levels)"], label: "Prime Vandal", weapon: "Vandal", minPriceCents: 1299 },
+  { matchAny: ["Oni Vandal", "Oni Vandal (4 Levels)"], label: "Oni Vandal", weapon: "Vandal", minPriceCents: 1299 },
+  { matchAny: ["Elderflame Vandal", "Elderflame Vandal (4 Levels)"], label: "Elderflame Vandal", weapon: "Vandal", minPriceCents: 1399 },
+  { matchAny: ["Prelude to Chaos Vandal", "Prelude to Chaos Vandal (4 Levels)"], label: "Prelude to Chaos Vandal", weapon: "Vandal", minPriceCents: 1499 },
+  { matchAny: ["RGX 11z Pro Vandal", "RGX 11z Pro Vandal (5 Levels)"], label: "RGX 11z Pro Vandal", weapon: "Vandal", minPriceCents: 1199 },
+  { matchAny: ["Ion Phantom", "Ion Phantom (4 Levels)"], label: "Ion Phantom", weapon: "Phantom", minPriceCents: 1199 },
+  { matchAny: ["Sovereign Ghost", "Sovereign Ghost (4 Levels)"], label: "Sovereign Ghost", weapon: "Ghost", minPriceCents:  999 },
+  { matchAny: ["Prime Ghost", "Prime Ghost (4 Levels)"], label: "Prime Ghost", weapon: "Ghost", minPriceCents:  999 },
+  { matchAny: ["Reaver Operator", "Reaver Operator (4 Levels)"], label: "Reaver Operator", weapon: "Operator", minPriceCents: 1299 },
+  { matchAny: ["Oni Operator", "Oni Operator (4 Levels)"], label: "Oni Operator", weapon: "Operator", minPriceCents: 1299 },
+  { matchAny: ["Araxys Operator", "Araxys Operator (4 Levels)"], label: "Araxys Operator", weapon: "Operator", minPriceCents: 1499 },
 ];
 
 export interface FeaturedSkinPrice {
@@ -144,10 +152,18 @@ export interface FeaturedSkinPrice {
   discountPct: number;
 }
 
-/** Compute the markup public price for a given cheapest-cost floor. */
+/**
+ * Flat-markup public price for a featured skin.
+ * public = max(qvsp_cost + FEATURED_FLAT_MARKUP_CENTS, per-skin minPrice)
+ *
+ * With FEATURED_MAX_TIER_DISCOUNT = 15% and FEATURED_FLAT_MARKUP = €5:
+ *   Ultra pays = public × 0.85
+ *   worst-case Ultra margin = (cost + 5) × 0.85 − cost = 0.85·5 − 0.15·cost
+ *   → safe for cost ≤ €28, which covers every qvsp skinned account (max ~€14).
+ */
 export function markupPublicPrice(cheapestQvspCents: number, minPriceCents: number): number {
-  const marked = Math.ceil((cheapestQvspCents * FEATURED_MARKUP_MULTIPLIER) / 100) * 100;
-  return Math.max(marked, minPriceCents);
+  const flat = cheapestQvspCents + FEATURED_FLAT_MARKUP_CENTS;
+  return Math.max(flat, minPriceCents);
 }
 
 /**
@@ -164,10 +180,15 @@ export function featuredPriceForUser(cheapestQvspCents: number, minPriceCents: n
 } {
   const publicCents = markupPublicPrice(cheapestQvspCents, minPriceCents);
   if (!tier) return { publicCents, finalCents: publicCents, savingsCents: 0, discountPct: 0 };
-  // Use the highest-bracket discount (whale tier) for featured skins; buyers
-  // choose named skins at a premium so apply the top discount for subs too.
-  const whaleDiscount: Record<SubTier, number> = { standard: 0.10, premium: 0.30, ultra: 0.50 };
-  const pct = whaleDiscount[tier];
+  // Flat 5/10/15 discount on featured skins — matches the bracket tier schedule.
+  // The real sub value is the FEATURES (early access, /snipe, auto-buy); the
+  // discount is a modest sprinkle that keeps per-sale margin positive.
+  const featuredDiscount: Record<SubTier, number> = {
+    standard: 0.05,
+    premium: 0.10,
+    ultra: FEATURED_MAX_TIER_DISCOUNT,
+  };
+  const pct = featuredDiscount[tier];
   const final = Math.floor(publicCents * (1 - pct));
   return { publicCents, finalCents: final, savingsCents: publicCents - final, discountPct: pct };
 }

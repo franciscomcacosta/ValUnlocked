@@ -4,7 +4,6 @@ export const runtime = "nodejs";
 import { db } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/session";
 
-export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   const auth = requireAdmin(req);

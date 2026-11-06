@@ -11,7 +11,6 @@ export const runtime = "nodejs";
 import { db } from "@/lib/supabase";
 import { enterGrace, expireSubscription, sendRenewalReminder } from "@/lib/subs";
 
-export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(req: Request) {

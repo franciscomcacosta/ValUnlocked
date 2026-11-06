@@ -22,7 +22,6 @@ function computePublicPriceCents(kind: string, skinCount: number): number {
   return SKIN_BRACKETS[0].publicPriceCents;
 }
 
-export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(req: Request) {

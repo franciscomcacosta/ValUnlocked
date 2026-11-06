@@ -4,7 +4,6 @@ export const runtime = "nodejs";
 import { db } from "@/lib/supabase";
 import { getSessionUserId } from "@/lib/session";
 
-export const runtime = "nodejs";
 
 // The signed-in buyer's orders (no credentials – those come from /api/orders/[id]).
 export async function GET(req: Request) {

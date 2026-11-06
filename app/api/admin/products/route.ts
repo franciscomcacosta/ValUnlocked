@@ -4,7 +4,6 @@ export const runtime = "nodejs";
 import { db } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/session";
 
-export const runtime = "nodejs";
 
 // Create or update a product listing (matched on slug).
 export async function POST(req: Request) {

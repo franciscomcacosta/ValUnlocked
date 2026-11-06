@@ -5,7 +5,6 @@ import { db } from "@/lib/supabase";
 import { encrypt } from "@/lib/crypto";
 import { requireAdmin } from "@/lib/session";
 
-export const runtime = "nodejs";
 
 // Add one full-access account to stock. Credentials are encrypted before insert.
 export async function POST(req: Request) {

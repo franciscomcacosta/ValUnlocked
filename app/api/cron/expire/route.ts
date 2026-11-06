@@ -3,7 +3,6 @@ export const runtime = "nodejs";
 
 import { db } from "@/lib/supabase";
 
-export const runtime = "nodejs";
 
 // Hourly job (Vercel Cron, see vercel.json): releases stock held by unpaid
 // orders and returns any credit they used.

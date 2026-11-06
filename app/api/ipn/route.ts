@@ -14,7 +14,6 @@ import { cancelOrder } from "@/lib/checkout";
 import { applyPaidSubInvoice } from "@/lib/subs";
 import { logToStaff } from "@/lib/discord";
 
-export const runtime = "nodejs";
 
 const PAID = new Set(["finished", ...(process.env.FULFIL_ON_CONFIRMED === "true" ? ["confirmed"] : [])]);
 const DEAD = new Set(["expired", "failed"]);

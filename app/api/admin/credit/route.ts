@@ -4,7 +4,6 @@ export const runtime = "nodejs";
 import { db } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/session";
 
-export const runtime = "nodejs";
 
 // Give a buyer store credit (refunds, goodwill). Positive amounts only;
 // credit is spent through checkout, never removed by hand.

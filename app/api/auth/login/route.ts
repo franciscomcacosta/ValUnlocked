@@ -4,7 +4,6 @@ export const runtime = "nodejs";
 import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
 
 // Sends the user to Discord's consent screen (scope: identify only).
 export async function GET() {

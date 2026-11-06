@@ -5,7 +5,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/supabase";
 import { encodeSession, SESSION_COOKIE, SESSION_DAYS } from "@/lib/session";
 
-export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const base = process.env.PUBLIC_BASE_URL!;

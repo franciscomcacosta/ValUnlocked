@@ -4,7 +4,6 @@ export const runtime = "nodejs";
 import { createCheckout } from "@/lib/checkout";
 import { getSessionUserId } from "@/lib/session";
 
-export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   const userId = await getSessionUserId(req);

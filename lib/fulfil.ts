@@ -6,6 +6,7 @@ import { db } from "./supabase";
 import { notifyDiscordUser } from "./discord";
 import { buyAccount, type QvspKind } from "./qvsp";
 import { encrypt } from "./crypto";
+import type { SubTier } from "./pricing";
 
 export async function fulfilOrder(orderId: string): Promise<boolean> {
   // Atomically claim this order. Duplicate IPN deliveries return null.
@@ -136,5 +137,49 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     ).catch((e) => console.error("[fulfil] DM failed", e));
   }
 
+  // Fire-and-forget email extraction for Premium+ subscribers. Worker will
+  // POST back to /api/worker/callback with the extracted email or a failure.
+  // Standard users don't get auto-extraction — they have to figure it out
+  // themselves, which is a feature not a bug (keeps the method a sub perk).
+  void maybeDispatchEmailExtraction(orderId, order.user_id, creds.login, creds.password);
+
   return true;
+}
+
+/** Only fires if user is Premium or Ultra AND the worker URL is configured. */
+async function maybeDispatchEmailExtraction(
+  orderId: string,
+  userId: string,
+  login: string,
+  password: string
+): Promise<void> {
+  const workerUrl = process.env.EXTRACTOR_WORKER_URL;
+  const workerSecret = process.env.EXTRACTOR_WORKER_SECRET;
+  if (!workerUrl || !workerSecret) return; // feature disabled
+
+  // Gate by sub tier.
+  const { data: sub } = await db
+    .from("subscriptions")
+    .select("tier")
+    .eq("user_id", userId)
+    .in("status", ["active", "grace"])
+    .maybeSingle();
+  const tier = (sub?.tier ?? null) as SubTier | null;
+  if (tier !== "premium" && tier !== "ultra") return;
+
+  try {
+    const res = await fetch(`${workerUrl.replace(/\/$/, "")}/extract`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${workerSecret}`,
+      },
+      body: JSON.stringify({ order_id: orderId, login, password }),
+    });
+    if (!res.ok) {
+      console.error(`[fulfil] worker dispatch failed ${res.status}:`, await res.text().catch(() => ""));
+    }
+  } catch (e) {
+    console.error("[fulfil] worker fetch error:", e);
+  }
 }

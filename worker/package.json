@@ -1,0 +1,21 @@
+{
+  "name": "valo-shop-worker",
+  "version": "1.0.0",
+  "description": "Headless-browser extractor for Riot account emails. Called by the main app after a qvsp purchase; returns the extracted email via callback.",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0",
+    "playwright": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,22 @@
+# fly.toml — Fly.io deploy config for the extractor worker.
+# Deploy: `fly launch` (first time) or `fly deploy` (subsequent).
+# Set secrets with: fly secrets set MAIN_APP_URL=... CALLBACK_SECRET=... TWO_CAPTCHA_KEY=...
+
+app = "valo-shop-worker"
+primary_region = "cdg"  # Paris — closest to Lisbon
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0        # scales to zero when idle (free tier)
+  processes = ["app"]
+
+[[vm]]
+  memory = "1gb"                   # chromium needs ≥512MB; 1GB is safe
+  cpu_kind = "shared"
+  cpus = 1

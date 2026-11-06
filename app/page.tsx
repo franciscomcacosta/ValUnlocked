@@ -381,7 +381,6 @@ const TIER_CARDS = [
     tagline: "The toolkit — cheaper accounts + the method.",
     perks: [
       "**10% off** every account",
-      "**€3 monthly credit** (auto-applied)",
       "Discord + written method",
       "Email Grabber tool",
     ],
@@ -396,9 +395,8 @@ const TIER_CARDS = [
     badge: "MOST POPULAR",
     perks: [
       "**20% off** every account",
-      "**€8 monthly credit** (free mid-tier account)",
-      "2-hour early access on new drops",
-      "Custom stock alerts (/snipe)",
+      "**2-hour early access** on new drops",
+      "Custom stock alerts (`/snipe`)",
     ],
   },
   {
@@ -407,12 +405,12 @@ const TIER_CARDS = [
     name: "Ultra",
     priceCents: 5999,
     color: "#ffd400",
-    tagline: "Let the bot buy for you.",
+    tagline: "Pick the exact account you want.",
     badge: "BEST VALUE",
     perks: [
       "**30% off** every account",
-      "**€20 monthly credit** (free whale account)",
-      "Auto-buy matching drops",
+      "**⚡ X-RAY** — see every skin before you buy",
+      "**Auto-buy** matching drops",
       "Priority replacement handling",
     ],
   },

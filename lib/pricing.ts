@@ -63,13 +63,14 @@ const TIER_DISCOUNT: Record<SubTier, Record<BracketName, number>> = {
   ultra:    { s_1_25: 0.30, s_26_50: 0.30, s_51_100: 0.30, s_101_150: 0.30, s_151_200: 0.30, s_200_plus: 0.30 },
 };
 
-// Monthly store credit granted on every sub payment (initial + each renewal).
-// Zero margin impact (we already collected the sub fee) but huge perceived
-// value — "1 free account per month as an Ultra member" is a killer pitch.
+// Monthly credit was removed — it's effectively a baked-in discount for
+// active buyers, and the sub pitch is strong enough on features (X-RAY,
+// auto-buy, early access, /snipe, email grabber) + the 10/20/30% discount.
+// Kept at 0 so existing lib/subs.ts code paths still compile.
 export const SUB_MONTHLY_CREDIT_CENTS: Record<SubTier, number> = {
-  standard:  300,   // €3
-  premium:   800,   // €8
-  ultra:    2000,   // €20
+  standard: 0,
+  premium:  0,
+  ultra:    0,
 };
 
 // Subscription period + grace + drop-embargo settings.

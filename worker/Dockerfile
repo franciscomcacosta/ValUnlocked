@@ -4,9 +4,10 @@ FROM mcr.microsoft.com/playwright:v1.48.0-jammy
 
 WORKDIR /app
 
-# Install deps first so Docker caches this layer when src changes.
+# Install ALL deps (incl. devDependencies, needed for TypeScript compile).
+# Playwright's image is already ~2GB; a few extra MB of dev deps is nothing.
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+RUN npm ci || npm install
 
 # Copy source + compile.
 COPY tsconfig.json ./

@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 // Every 2 minutes: pull qvsp live stock, upsert into our mirror, mark stale
 // rows removed. Triggered by Vercel Cron — add
 //   { "path": "/api/cron/sync-qvsp", "schedule": "*/2 * * * *" }

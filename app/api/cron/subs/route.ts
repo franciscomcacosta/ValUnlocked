@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 // Hourly subscription lifecycle cron.
 // - Sends T-7 / T-3 / T-1 day renewal reminders (idempotent via flags).
 // - Flips 'active' → 'grace' when period_end passes.

@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { db } from "@/lib/supabase";
 import { encrypt } from "@/lib/crypto";
 import { requireAdmin } from "@/lib/session";

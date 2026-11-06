@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 // NOWPayments IPN handler. Branches on the order_id prefix:
 //   "sub_<uuid>"  → subscription invoice (lib/subs.applyPaidSubInvoice)
 //   "<uuid>"      → account order (lib/fulfil.fulfilOrder)

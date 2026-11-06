@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { createCheckout } from "@/lib/checkout";
 import { getSessionUserId } from "@/lib/session";
 

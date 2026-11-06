@@ -11,6 +11,7 @@ import {
   priceForBracket,
   FEATURED_SKINS,
   featuredPriceForUser,
+  xrayPriceForUltra,
   type BracketName,
   type SubTier,
   type FeaturedSkin,
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
   if (!session) return Response.json({ error: "auth_required" }, { status: 401 });
 
   const body = (await req.json().catch(() => null)) as
-    | { region?: string; bracket?: string; skin?: string; useCredit?: boolean }
+    | { region?: string; bracket?: string; skin?: string; account_id?: string; useCredit?: boolean }
     | null;
   const region = body?.region?.toUpperCase();
   if (!region || !REGIONS.has(region)) {
@@ -42,14 +43,50 @@ export async function POST(req: Request) {
     .maybeSingle();
   const tier = (sub?.tier ?? null) as SubTier | null;
 
-  // Branch: bracket OR skin
+  // Branch: X-RAY specific-account (ultra only) > featured skin > bracket
+  if (body?.account_id) {
+    if (tier !== "ultra") return Response.json({ error: "ultra_required" }, { status: 403 });
+    return handleXrayBuy({ region, accountId: body.account_id, useCredit: body.useCredit !== false, userId: session.uid });
+  }
   if (body?.skin) {
     return handleFeaturedSkinBuy({ region, skinLabel: body.skin, useCredit: body.useCredit !== false, userId: session.uid, tier });
   }
   if (body?.bracket) {
     return handleBracketBuy({ region, bracketName: body.bracket as BracketName, useCredit: body.useCredit !== false, userId: session.uid, tier });
   }
-  return Response.json({ error: "bracket_or_skin_required" }, { status: 400 });
+  return Response.json({ error: "bracket_or_skin_or_account_required" }, { status: 400 });
+}
+
+// ─── X-RAY (Ultra-only specific-account purchase) ─────────────
+
+async function handleXrayBuy(opts: { region: string; accountId: string; useCredit: boolean; userId: string }): Promise<Response> {
+  // Fetch the specific account to confirm it exists, matches region, and is
+  // available. Reserve it and invoice.
+  const { data: acc, error: aErr } = await db
+    .from("qvsp_stock")
+    .select("qvsp_id, region, qvsp_price_cents, skin_count")
+    .eq("qvsp_id", opts.accountId)
+    .eq("region", opts.region)
+    .is("reserved_order_id", null)
+    .is("removed_at", null)
+    .eq("claimed", false)
+    .maybeSingle();
+  if (aErr) return Response.json({ error: aErr.message }, { status: 500 });
+  if (!acc) return Response.json({ error: "account_unavailable" }, { status: 409 });
+
+  const pricing = xrayPriceForUltra(acc.qvsp_price_cents);
+  const productId = await resolveXrayProductId();
+
+  return reserveAndInvoice({
+    userId: opts.userId,
+    productId,
+    region: opts.region,
+    candidates: [acc.qvsp_id],
+    publicCents: pricing.publicCents,
+    finalCents: pricing.finalCents,
+    useCredit: opts.useCredit,
+    description: `Valorant account · X-RAY pick · ${opts.region} · ${acc.skin_count} skins`,
+  });
 }
 
 // ─── Bracket (random in range) ─────────────────────────────────
@@ -254,6 +291,27 @@ async function resolveBracketProductId(bracket: BracketName): Promise<string> {
       currency: "eur",
       active: false,
       description: "Internal placeholder for QVSP bracket orders.",
+    })
+    .select("id")
+    .single();
+  if (error || !created) throw new Error(`placeholder product create failed: ${error?.message}`);
+  return created.id;
+}
+
+async function resolveXrayProductId(): Promise<string> {
+  const slug = "qvsp-xray";
+  const { data: existing } = await db.from("products").select("id").eq("slug", slug).maybeSingle();
+  if (existing?.id) return existing.id;
+  const { data: created, error } = await db
+    .from("products")
+    .insert({
+      slug,
+      name: "QVSP · X-RAY (specific account)",
+      region: "QVSP",
+      price_cents: 100,
+      currency: "eur",
+      active: false,
+      description: "Internal placeholder for Ultra-only specific-account purchases.",
     })
     .select("id")
     .single();

@@ -58,7 +58,7 @@ interface Order {
 export default function Page() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"stock" | "subscribe" | "purchases" | "admin">("stock");
+  const [tab, setTab] = useState<"stock" | "subscribe" | "purchases" | "xray" | "admin">("stock");
 
   useEffect(() => {
     fetch("/api/me")
@@ -92,6 +92,13 @@ export default function Page() {
           >
             My Purchases
           </button>
+          <button
+            className={`tab ${tab === "xray" ? "active-gold" : ""}`}
+            onClick={() => setTab("xray")}
+            title={me.sub?.tier === "ultra" ? "Account-level recon" : "Ultra only"}
+          >
+            {me.sub?.tier === "ultra" ? "⚡ X-RAY" : "🔒 X-RAY"}
+          </button>
           {me.isAdmin && (
             <button className={`tab ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")}>
               Admin
@@ -103,6 +110,7 @@ export default function Page() {
           {tab === "stock" && <Stock me={me} />}
           {tab === "subscribe" && <Subscribe me={me} reload={() => window.location.reload()} />}
           {tab === "purchases" && <Purchases />}
+          {tab === "xray" && <XRay me={me} />}
           {tab === "admin" && me.isAdmin && <Admin />}
         </div>
       </div>
@@ -613,7 +621,231 @@ function errorText(code: string) {
       auth_required: "Please sign in again.",
       payment_provider_error: "Payment couldn't be started. Try again in a moment.",
       order_create_failed: "Couldn't create the order — try again.",
+      ultra_required: "X-RAY is Ultra-only.",
+      account_unavailable: "That account was just reserved by someone else.",
     }[code] ?? code
+  );
+}
+
+// ─── X-RAY tab (Ultra only — see every skin before you buy) ─────
+
+interface XrayAccount {
+  account_id: string;
+  region: Region;
+  level: number;
+  peak: string | null;
+  rank: string | null;
+  skin_count: number;
+  skins: string[];
+  buddies: string[];
+  vp: number | null;
+  vp_value_cents: number | null;
+  last_played: string | null;
+  first_seen_at: string;
+  publicCents: number;
+  finalCents: number;
+  savingsCents: number;
+  discountPct: number;
+}
+
+function XRay({ me }: { me: Me }) {
+  if (me.sub?.tier !== "ultra") {
+    return (
+      <div className="card" style={{ maxWidth: 560, margin: "40px auto", textAlign: "center", borderColor: "var(--gold)", borderWidth: 2 }}>
+        <div style={{ fontSize: 42 }}>⚡</div>
+        <h2 style={{ marginTop: 8, color: "var(--gold)" }}>X-RAY is Ultra-only</h2>
+        <p className="muted" style={{ marginTop: 10 }}>
+          See every skin in every account before you buy.<br/>
+          Pick the exact account you want. No more random roulette.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, margin: "20px 0", textAlign: "left", maxWidth: 360, marginLeft: "auto", marginRight: "auto" }}>
+          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> Full skin inventory per account</div>
+          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> Current + peak rank visible</div>
+          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> VP balance + buddies</div>
+          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> Buy the exact account — no random pick</div>
+        </div>
+        <button
+          className="btn gold"
+          onClick={() => {
+            const ev = new CustomEvent("switch-tab", { detail: "subscribe" });
+            window.dispatchEvent(ev);
+            // fallback: hard reload with ?tab=subscribe
+            window.location.href = "/?tab=subscribe";
+          }}
+        >
+          Upgrade to Ultra — €59.99/mo
+        </button>
+      </div>
+    );
+  }
+  return <XrayTable />;
+}
+
+function XrayTable() {
+  const [region, setRegion] = useState<Region>("EU");
+  const [page, setPage] = useState(1);
+  const [minSkins, setMinSkins] = useState(0);
+  const [skinSearch, setSkinSearch] = useState("");
+  const [sort, setSort] = useState<"newest" | "cheapest" | "most_skins" | "highest_peak">("newest");
+  const [data, setData] = useState<{ items: XrayAccount[]; total: number; totalPages: number } | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    setData(null);
+    const q = new URLSearchParams({
+      region,
+      page: String(page),
+      sort,
+      ...(minSkins > 0 ? { minSkins: String(minSkins) } : {}),
+      ...(skinSearch ? { skin: skinSearch } : {}),
+    });
+    fetch(`/api/stock/xray?${q}`)
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setData({ items: [], total: 0, totalPages: 0 }));
+  }, [region, page, minSkins, skinSearch, sort]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Reset to page 1 when filters change.
+  useEffect(() => { setPage(1); }, [region, minSkins, skinSearch, sort]);
+
+  async function buy(accountId: string) {
+    setBusy(accountId);
+    setErr("");
+    const res = await fetch("/api/stock/buy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ region, account_id: accountId, useCredit: true }),
+    });
+    const resp = await res.json();
+    setBusy(null);
+    if (!res.ok) { setErr(errorText(resp.error) ?? "Something went wrong"); return; }
+    if (resp.invoiceUrl) window.location.href = resp.invoiceUrl;
+    else window.location.href = `/orders/${resp.orderId}`;
+  }
+
+  return (
+    <>
+      <div className="section-label" style={{ color: "var(--gold)" }}>⚡ X-RAY · Ultra Terminal</div>
+
+      {/* Region tabs */}
+      <div className="tabs-secondary">
+        {REGIONS.map((r) => (
+          <button key={r} className={`tab ${region === r ? "active" : ""}`} onClick={() => setRegion(r)}>
+            {regionLabel(r)}
+          </button>
+        ))}
+      </div>
+
+      {/* Filters row */}
+      <div className="row" style={{ gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+        <input
+          className="input"
+          style={{ maxWidth: 240 }}
+          placeholder="Search by skin name…"
+          value={skinSearch}
+          onChange={(e) => setSkinSearch(e.target.value)}
+        />
+        <input
+          className="input"
+          style={{ maxWidth: 140 }}
+          type="number"
+          min={0}
+          placeholder="Min skins"
+          value={minSkins || ""}
+          onChange={(e) => setMinSkins(parseInt(e.target.value, 10) || 0)}
+        />
+        <select className="select" style={{ maxWidth: 180 }} value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+          <option value="newest">Newest first</option>
+          <option value="cheapest">Cheapest first</option>
+          <option value="most_skins">Most skins</option>
+          <option value="highest_peak">Highest peak</option>
+        </select>
+        <span className="muted" style={{ marginLeft: "auto", fontSize: 13 }}>
+          {data ? `${data.total.toLocaleString()} accounts` : "—"}
+        </span>
+      </div>
+
+      {err && <p className="err" style={{ marginBottom: 12 }}>{err}</p>}
+
+      {data === null ? (
+        <p className="muted" style={{ padding: 40, textAlign: "center" }}>Loading inventory…</p>
+      ) : data.items.length === 0 ? (
+        <p className="muted" style={{ padding: 40, textAlign: "center" }}>
+          No accounts match. Try widening your filters.
+        </p>
+      ) : (
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Peak</th>
+                <th>Level</th>
+                <th>Skins</th>
+                <th>VP</th>
+                <th>Price</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((a) => (
+                <>
+                  <tr key={a.account_id} style={{ cursor: "pointer" }} onClick={() => setExpanded(expanded === a.account_id ? null : a.account_id)}>
+                    <td>{a.rank ?? "—"}</td>
+                    <td className="muted">{a.peak ?? "—"}</td>
+                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.level}</td>
+                    <td style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{a.skin_count}</td>
+                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.vp ?? 0}</td>
+                    <td style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
+                      <span className="price-strike" style={{ fontSize: 11, marginRight: 4 }}>{eur(a.publicCents)}</span>
+                      <span style={{ color: "var(--gold)" }}>{eur(a.finalCents)}</span>
+                    </td>
+                    <td>
+                      <button
+                        className="btn gold sm"
+                        disabled={busy === a.account_id}
+                        onClick={(e) => { e.stopPropagation(); buy(a.account_id); }}
+                      >
+                        {busy === a.account_id ? "…" : "BUY"}
+                      </button>
+                    </td>
+                  </tr>
+                  {expanded === a.account_id && (
+                    <tr key={`${a.account_id}-exp`}>
+                      <td colSpan={7} style={{ background: "var(--panel-2)", padding: 16 }}>
+                        <div className="row" style={{ gap: 20, marginBottom: 12, flexWrap: "wrap" }}>
+                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>REGION</span><div style={{ fontWeight: 700 }}>{a.region}</div></div>
+                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>VP VALUE</span><div style={{ fontWeight: 700 }}>{a.vp_value_cents ? eur(a.vp_value_cents) : "—"}</div></div>
+                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>LAST PLAYED</span><div style={{ fontWeight: 700 }}>{a.last_played ?? "—"}</div></div>
+                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>BUDDIES</span><div style={{ fontWeight: 700 }}>{a.buddies?.length ?? 0}</div></div>
+                        </div>
+                        <div className="section-label" style={{ marginBottom: 8 }}>All Skins ({a.skins.length})</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                          {a.skins.map((s) => (
+                            <span key={s} className="badge" style={{ fontSize: 12 }}>{s}</span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+
+          {/* Pagination */}
+          <div className="row" style={{ justifyContent: "center", gap: 10, marginTop: 20 }}>
+            <button className="btn ghost sm" disabled={page === 1} onClick={() => setPage(page - 1)}>← Prev</button>
+            <span className="muted" style={{ fontVariantNumeric: "tabular-nums" }}>Page {page} of {data.totalPages}</span>
+            <button className="btn ghost sm" disabled={page >= data.totalPages} onClick={() => setPage(page + 1)}>Next →</button>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 

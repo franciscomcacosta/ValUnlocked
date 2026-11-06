@@ -157,6 +157,37 @@ export const FEATURED_FLAT_MARKUP_CENTS = 500;    // €5 added to qvsp cost
 export const FEATURED_MIN_MARGIN_CENTS  = 200;    // €2 minimum profit
 export const FEATURED_MAX_TIER_DISCOUNT = 0.30;   // Ultra cap (matches brackets)
 
+// ─── X-RAY pricing (Ultra-only specific-account purchases) ──────
+// Ultra users pick a SPECIFIC qvsp account after inspecting its full
+// inventory. They pay a premium over bracket price because they're
+// choosing exactly what they want (no random roulette).
+// public = max(qvsp_cost + XRAY_FLAT_MARKUP, safetyFloor)
+// safetyFloor ensures ≥ €2 margin even at Ultra 30% off.
+export const XRAY_FLAT_MARKUP_CENTS = 700;    // €7 premium over cost
+export const XRAY_MIN_MARGIN_CENTS  = 200;    // €2 min profit
+// Ultra discount reused: FEATURED_MAX_TIER_DISCOUNT (0.30)
+
+export function xrayPublicPrice(qvspCostCents: number): number {
+  const flat = qvspCostCents + XRAY_FLAT_MARKUP_CENTS;
+  const safetyFloor = Math.ceil(
+    (qvspCostCents + XRAY_MIN_MARGIN_CENTS) / (1 - FEATURED_MAX_TIER_DISCOUNT) / 100
+  ) * 100;
+  return Math.max(flat, safetyFloor);
+}
+
+/** Final price Ultra actually pays for a specific-account X-RAY purchase. */
+export function xrayPriceForUltra(qvspCostCents: number): {
+  publicCents: number;
+  finalCents: number;
+  savingsCents: number;
+  discountPct: number;
+} {
+  const publicCents = xrayPublicPrice(qvspCostCents);
+  const pct = FEATURED_MAX_TIER_DISCOUNT; // Ultra always
+  const finalCents = Math.floor(publicCents * (1 - pct));
+  return { publicCents, finalCents, savingsCents: publicCents - finalCents, discountPct: pct };
+}
+
 export const FEATURED_SKINS: FeaturedSkin[] = [
   { matchAny: ["Reaver Vandal", "Reaver Vandal (4 Levels)", "Reaver Vandal (5 Levels)"], label: "Reaver Vandal", weapon: "Vandal", minPriceCents: 1799 },
   { matchAny: ["Prime Vandal", "Prime Vandal (4 Levels)"], label: "Prime Vandal", weapon: "Vandal", minPriceCents: 1599 },

@@ -2,11 +2,12 @@
 // Dashboard — the ONLY signed-in page. Middleware gates every route behind
 // Discord OAuth, so if we're here we're signed in.
 //
-// Tabs: Stock · Subscribe · My Purchases · ⚡ X-RAY (Ultra) · Admin
-//
-// Visual language: Valorant-dark (ported from the design canvas in phase 2).
+// Layout follows the designer's Main artboard: single-viewport-height,
+// no page scroll. Header strip → live feed → main area with left-list +
+// right-checkout panel. Tabs switch the main area contents without changing
+// the shell.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { LockLogo } from "@/components/lock-logo";
 
 // ----- Types ----------------------------------------------------
@@ -33,6 +34,12 @@ const TIER_LABEL: Record<Tier, string> = {
   standard: "Standard",
   premium:  "Premium",
   ultra:    "Ultra",
+};
+
+const TIER_DISCOUNT_PCT: Record<Tier, number> = {
+  standard: 10,
+  premium:  20,
+  ultra:    30,
 };
 
 interface Me {
@@ -79,21 +86,17 @@ interface Order {
 
 // ----- Helpers --------------------------------------------------
 
-const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
+const eur = (c: number) => (c / 100).toFixed(2);
 
-function tierPillColor(tier: Tier): string {
-  return TIER_COLOR[tier];
-}
-
-// Sample live feed for the marquee until we wire /api/public-stats.
+// Sample live feed until /api/public-stats exists.
 const SAMPLE_FEED = [
   { u: "cyph3r",   item: "Reaver Vandal",       t: "just now", c: "#d1548d" },
   { u: "blitz_",   item: "Prime Vandal",        t: "2m ago",   c: "#d1548d" },
-  { u: "neko",     item: "26–50 skins · EU",    t: "5m ago",   c: "#ece8e1" },
+  { u: "neko",     item: "26–50 skins · EU", t: "5m ago", c: "#ece8e1" },
   { u: "veyl",     item: "Elderflame Vandal",   t: "8m ago",   c: "#fad663" },
   { u: "ayva",     item: "Oni Phantom",         t: "11m ago",  c: "#d1548d" },
   { u: "mirai",    item: "Araxys Operator",     t: "14m ago",  c: "#f5955b" },
-  { u: "hollow",   item: "51–100 skins · AP",   t: "17m ago",  c: "#ece8e1" },
+  { u: "hollow",   item: "51–100 skins · AP", t: "17m ago", c: "#ece8e1" },
   { u: "pixel",    item: "RGX 11z Pro Vandal",  t: "22m ago",  c: "#f5955b" },
 ];
 
@@ -145,10 +148,11 @@ export default function Page() {
     <div
       className="vu"
       style={{
-        minHeight: "100vh",
+        height: "100vh",
+        minHeight: "600px",
         display: "flex",
         flexDirection: "column",
-        background: "var(--vu-bg-light)",
+        overflow: "hidden",
       }}
     >
       <Header me={me} tab={tab} onTab={setTab} isUltra={isUltra} />
@@ -159,9 +163,6 @@ export default function Page() {
           minHeight: 0,
           width: "100%",
           padding: "18px 24px",
-          maxWidth: "1480px",
-          margin: "0 auto",
-          boxSizing: "border-box",
         }}
       >
         {tab === "stock" && <StockTab me={me} />}
@@ -169,7 +170,7 @@ export default function Page() {
           <SubscribeTab me={me} reload={() => window.location.reload()} />
         )}
         {tab === "purchases" && <PurchasesTab />}
-        {tab === "xray" && <XrayTab isUltra={isUltra} />}
+        {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} />}
         {tab === "admin" && me.isAdmin && <AdminTab />}
       </main>
     </div>
@@ -181,30 +182,19 @@ export default function Page() {
 // ================================================================
 
 function Header({
-  me,
-  tab,
-  onTab,
-  isUltra,
-}: {
-  me: Me;
-  tab: TabKey;
-  onTab: (t: TabKey) => void;
-  isUltra: boolean;
-}) {
+  me, tab, onTab, isUltra,
+}: { me: Me; tab: TabKey; onTab: (t: TabKey) => void; isUltra: boolean }) {
   const feed = SAMPLE_FEED.concat(SAMPLE_FEED);
   const subDaysLeft = me.sub
-    ? Math.max(
-        0,
-        Math.floor(
-          (new Date(me.sub.periodEnd).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-        )
-      )
+    ? Math.max(0, Math.floor(
+        (new Date(me.sub.periodEnd).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      ))
     : null;
   const subPips = Array.from({ length: 10 }).map((_, i) => {
     const progress = subDaysLeft != null ? Math.ceil((subDaysLeft / 30) * 10) : 0;
     return i < progress;
   });
-  const tierColor = me.sub ? tierPillColor(me.sub.tier) : null;
+  const tierColor = me.sub ? TIER_COLOR[me.sub.tier] : null;
 
   return (
     <header style={{ flex: "none", background: "var(--vu-navy)", color: "var(--vu-ivory)" }}>
@@ -228,14 +218,14 @@ function Header({
         {/* Nav tabs */}
         <nav className="nav" aria-label="Sections">
           {([
-            { key: "stock",      label: "Stock" },
-            { key: "subscribe",  label: "Subscribe" },
-            { key: "purchases",  label: "My Purchases" },
+            { key: "stock",      label: "Stock",         ultra: false },
+            { key: "subscribe",  label: "Subscribe",     ultra: false },
+            { key: "purchases",  label: "My Purchases",  ultra: false },
             { key: "xray",       label: isUltra ? "⚡ X-RAY" : "🔒 X-RAY", ultra: true },
           ] as const).map((t) => (
             <button
               key={t.key}
-              className={`${tab === t.key ? "on" : ""} ${"ultra" in t && t.ultra ? "ul" : ""}`}
+              className={`${tab === t.key ? "on" : ""} ${t.ultra ? "ul" : ""}`}
               onClick={() => onTab(t.key as TabKey)}
             >
               {t.label}
@@ -291,27 +281,10 @@ function Header({
               }}
             >
               <span style={{ display: "flex", alignItems: "baseline", gap: "8px", whiteSpace: "nowrap" }}>
-                <span
-                  className="bc"
-                  style={{
-                    fontWeight: 700,
-                    fontSize: "15px",
-                    color: "#fff",
-                    letterSpacing: "0.08em",
-                    lineHeight: 1,
-                  }}
-                >
+                <span className="bc" style={{ fontWeight: 700, fontSize: "15px", color: "#fff", letterSpacing: "0.08em", lineHeight: 1 }}>
                   {TIER_LABEL[me.sub.tier]}
                 </span>
-                <span
-                  className="bc num"
-                  style={{
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    color: tierColor,
-                    lineHeight: 1,
-                  }}
-                >
+                <span className="bc num" style={{ fontWeight: 600, fontSize: "13px", color: tierColor, lineHeight: 1 }}>
                   {subDaysLeft}d left
                 </span>
               </span>
@@ -349,7 +322,7 @@ function Header({
               Credit
             </span>
             <span className="num" style={{ fontWeight: 700, color: "#ffd400" }}>
-              {eur(me.creditCents)}
+              €{eur(me.creditCents)}
             </span>
           </div>
         )}
@@ -407,17 +380,7 @@ function Header({
             }}
             title={me.name}
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <polyline points="16 17 21 12 16 7" />
               <line x1="21" y1="12" x2="9" y2="12" />
@@ -484,14 +447,19 @@ function Header({
 // ================================================================
 
 type StockMode = "bracket" | "skin";
+type Selected =
+  | { kind: "bracket"; row: BracketRow }
+  | { kind: "skin";    row: FeaturedSkinRow };
 
 function StockTab({ me }: { me: Me }) {
   const [mode, setMode] = useState<StockMode>("bracket");
   const [region, setRegion] = useState<Region>("EU");
   const [brackets, setBrackets] = useState<BracketRow[] | null>(null);
   const [featured, setFeatured] = useState<FeaturedSkinRow[] | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [sel, setSel] = useState<Selected | null>(null);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>("");
+  const [useCredit, setUseCredit] = useState(true);
   const [query, setQuery] = useState<string>("");
 
   const loadBrackets = useCallback(() => {
@@ -512,6 +480,9 @@ function StockTab({ me }: { me: Me }) {
   useEffect(() => { loadBrackets(); }, [loadBrackets]);
   useEffect(() => { loadFeatured(region); }, [region, loadFeatured]);
 
+  // Clear selection when switching mode/region
+  useEffect(() => { setSel(null); }, [mode, region]);
+
   const totalsByRegion: Partial<Record<Region, number>> = {};
   for (const row of brackets ?? []) {
     totalsByRegion[row.region] = (totalsByRegion[row.region] ?? 0) + row.available;
@@ -519,25 +490,28 @@ function StockTab({ me }: { me: Me }) {
 
   const visibleBrackets = (brackets ?? []).filter((b) => b.region === region);
   const visibleSkins = (featured ?? []).filter((s) =>
-    query ? s.label.toLowerCase().includes(query.toLowerCase()) ||
-             s.weapon.toLowerCase().includes(query.toLowerCase())
-          : true
+    query
+      ? s.label.toLowerCase().includes(query.toLowerCase()) ||
+        s.weapon.toLowerCase().includes(query.toLowerCase())
+      : true
   );
   const regionTotal = visibleBrackets.reduce((a, b) => a + b.available, 0);
 
-  const subDiscountPct =
-    me.sub?.tier === "ultra" ? 30 :
-    me.sub?.tier === "premium" ? 20 :
-    me.sub?.tier === "standard" ? 10 : 0;
+  const subDiscountPct = me.sub ? TIER_DISCOUNT_PCT[me.sub.tier] : 0;
 
-  async function buyBracket(bracket: string) {
-    setBusy(`b:${bracket}`);
+  async function buyNow() {
+    if (!sel) return;
+    setBusy(true);
     setErr("");
     try {
+      const body =
+        sel.kind === "bracket"
+          ? { region, bracket: sel.row.bracket, useCredit }
+          : { region, skin: sel.row.label, useCredit };
       const res = await fetch("/api/stock/buy", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ region, bracket, useCredit: true }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "something went wrong");
@@ -546,38 +520,51 @@ function StockTab({ me }: { me: Me }) {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
 
-  async function buySkin(label: string) {
-    setBusy(`s:${label}`);
-    setErr("");
-    try {
-      const res = await fetch("/api/stock/buy", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ region, skin: label, useCredit: true }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "something went wrong");
-      if (data.invoiceUrl) window.location.href = data.invoiceUrl;
-      else window.location.href = `/orders/${data.orderId}`;
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
+  const selDisplay = useMemo(() => {
+    if (!sel) return null;
+    if (sel.kind === "bracket") {
+      return {
+        kind: "bracket" as const,
+        range: sel.row.label,
+        tc: "var(--vu-red)",
+        name: `${sel.row.label} skins`,
+        oldCents: sel.row.price.publicCents,
+        finalCents: sel.row.price.finalCents,
+        saveCents: sel.row.price.savingsCents,
+        stock: sel.row.available,
+      };
     }
-  }
+    return {
+      kind: "skin" as const,
+      name: `${sel.row.label} ${sel.row.weapon}`,
+      tc: "var(--tier-premium)",
+      oldCents: sel.row.publicCents,
+      finalCents: sel.row.finalCents,
+      saveCents: sel.row.savingsCents,
+      stock: sel.row.available,
+    };
+  }, [sel]);
+
+  const creditAvailable = me.creditCents;
+  const creditUsed = selDisplay && useCredit
+    ? Math.min(creditAvailable, selDisplay.finalCents)
+    : 0;
+  const dueCents = selDisplay ? Math.max(0, selDisplay.finalCents - creditUsed) : 0;
 
   return (
     <div
       style={{
+        height: "100%",
         display: "grid",
-        gridTemplateColumns: "1fr",
+        gridTemplateColumns: "minmax(0, 1fr) 350px",
         gap: "16px",
       }}
     >
+      {/* Left: list */}
       <section
         className="pn cut"
         style={{
@@ -585,6 +572,7 @@ function StockTab({ me }: { me: Me }) {
           display: "flex",
           flexDirection: "column",
           gap: "14px",
+          minHeight: 0,
         }}
       >
         {/* Mode + region segmented controls */}
@@ -625,7 +613,7 @@ function StockTab({ me }: { me: Me }) {
           </div>
         </div>
 
-        {/* Headline + search */}
+        {/* Headline row */}
         <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
           <span className="h num" style={{ fontSize: "28px" }}>
             {mode === "bracket" ? regionTotal : visibleSkins.length}{" "}
@@ -633,23 +621,17 @@ function StockTab({ me }: { me: Me }) {
               {mode === "bracket" ? "accounts" : "matching skins"} · {REGION_NAME[region]}
             </span>
           </span>
-          {subDiscountPct > 0 && (
+          {subDiscountPct > 0 && me.sub && (
             <span className="pill g">
-              {me.sub ? TIER_LABEL[me.sub.tier] : ""} −{subDiscountPct}% applied
+              {TIER_LABEL[me.sub.tier]} −{subDiscountPct}% applied
             </span>
           )}
           <div style={{ flex: 1, minWidth: 12 }} />
           {mode === "skin" && (
             <div style={{ position: "relative", width: "230px", maxWidth: "100%" }}>
               <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#8b97a5"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="#8b97a5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                 aria-hidden="true"
                 style={{ position: "absolute", left: "10px", top: "11px", pointerEvents: "none" }}
               >
@@ -670,113 +652,254 @@ function StockTab({ me }: { me: Me }) {
         </div>
 
         {err && (
-          <div
-            style={{
-              padding: "10px 14px",
-              background: "#ffe4e6",
-              color: "var(--accent-rose)",
-              fontSize: "13px",
-            }}
-          >
+          <div style={{ padding: "10px 14px", background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px" }}>
             {err}
           </div>
         )}
 
-        {/* BRACKET MODE */}
-        {mode === "bracket" && (
-          <>
-            {brackets === null ? (
-              <SkeletonGrid rows={2} cols={3} />
-            ) : visibleBrackets.every((b) => b.available === 0) ? (
-              <EmptyState region={region} />
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
-                  gap: "10px",
-                }}
-              >
-                {visibleBrackets.map((b) => (
-                  <BracketTile
-                    key={b.bracket}
-                    row={b}
-                    busy={busy === `b:${b.bracket}`}
-                    onBuy={() => buyBracket(b.bracket)}
-                  />
-                ))}
-              </div>
-            )}
-            <p
-              className="mut num"
-              style={{
-                fontSize: "12px",
-                marginTop: "4px",
-                textAlign: "center",
-              }}
-            >
-              A random full-access account from the chosen bracket is delivered after payment
-              confirms on-chain. All accounts come with the original email so you can lock them down.
-            </p>
-          </>
+        {/* GRID: fills remaining space, scrolls if overflowing */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          {mode === "bracket" && (
+            <>
+              {brackets === null ? (
+                <SkeletonGrid rows={2} cols={3} />
+              ) : visibleBrackets.every((b) => b.available === 0) ? (
+                <EmptyState region={region} />
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                    gridAutoRows: "minmax(180px, 1fr)",
+                    gap: "10px",
+                  }}
+                >
+                  {visibleBrackets.map((b) => (
+                    <BracketTile
+                      key={b.bracket}
+                      row={b}
+                      region={region}
+                      selected={sel?.kind === "bracket" && sel.row.bracket === b.bracket}
+                      onPick={() => setSel({ kind: "bracket", row: b })}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {mode === "skin" && (
+            <>
+              {featured === null ? (
+                <SkeletonGrid rows={2} cols={4} />
+              ) : visibleSkins.length === 0 ? (
+                <EmptyState region={region} forSkins />
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                    gridAutoRows: "minmax(160px, 1fr)",
+                    gap: "10px",
+                  }}
+                >
+                  {visibleSkins.map((s) => (
+                    <SkinTile
+                      key={s.key}
+                      row={s}
+                      region={region}
+                      selected={sel?.kind === "skin" && sel.row.label === s.label}
+                      onPick={() => setSel({ kind: "skin", row: s })}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* Right: checkout panel */}
+      <aside
+        className="pn cut"
+        style={{
+          padding: "18px",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+        }}
+      >
+        {!selDisplay && (
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              textAlign: "center",
+              padding: "24px",
+            }}
+            className="mut"
+          >
+            Select an item to see the price breakdown.
+          </div>
         )}
 
-        {/* SKIN MODE */}
-        {mode === "skin" && (
-          <>
-            {featured === null ? (
-              <SkeletonGrid rows={2} cols={3} />
-            ) : visibleSkins.length === 0 ? (
-              <EmptyState region={region} forSkins />
-            ) : (
-              <div
+        {selDisplay && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "12px" }}>
+            {/* Hero */}
+            <div
+              className="cut"
+              style={{
+                position: "relative",
+                height: "clamp(90px, 18vh, 150px)",
+                flex: "none",
+                background: "var(--vu-navy-tile)",
+                overflow: "hidden",
+                ["--tc" as string]: selDisplay.tc,
+              }}
+            >
+              <span
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
-                  gap: "10px",
+                  position: "absolute",
+                  inset: 0,
+                  background: `linear-gradient(to top, ${selDisplay.tc} -30%, transparent 70%)`,
+                  opacity: 0.7,
                 }}
-              >
-                {visibleSkins.map((s) => (
-                  <SkinTile
-                    key={s.key}
-                    row={s}
-                    busy={busy === `s:${s.label}`}
-                    onBuy={() => buySkin(s.label)}
-                  />
-                ))}
+              />
+              {selDisplay.kind === "bracket" ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#fff",
+                  }}
+                >
+                  <span className="h num" style={{ fontSize: "56px" }}>{selDisplay.range}</span>
+                  <span className="bc" style={{ color: "var(--vu-ivory-dim)", fontSize: "16px" }}>
+                    Skins · random account
+                  </span>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#fff",
+                    padding: "16px",
+                  }}
+                >
+                  <span className="h" style={{ fontSize: "28px", textAlign: "center" }}>{selDisplay.name}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Title + region */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-end",
+                gap: "8px",
+              }}
+            >
+              <span className="h" style={{ fontSize: "22px" }}>{selDisplay.name}</span>
+              <span className="rg" style={{ background: "var(--vu-navy)" }}>{region}</span>
+            </div>
+
+            {/* Breakdown */}
+            <div style={{ background: "var(--vu-surface-alt)", padding: "2px 12px" }}>
+              <div className="kv">
+                <span className="mut">List price</span>
+                <span className="num mut" style={{ textDecoration: "line-through" }}>
+                  €{eur(selDisplay.oldCents)}
+                </span>
+              </div>
+              {subDiscountPct > 0 && me.sub && (
+                <div className="kv">
+                  <span style={{ color: "var(--accent-success)", fontWeight: 500 }}>
+                    {TIER_LABEL[me.sub.tier]} −{subDiscountPct}%
+                  </span>
+                  <span className="num" style={{ color: "var(--accent-success)", fontWeight: 600 }}>
+                    −€{eur(selDisplay.saveCents)}
+                  </span>
+                </div>
+              )}
+              {useCredit && creditUsed > 0 && (
+                <div className="kv">
+                  <span style={{ color: "#a16207", fontWeight: 500 }}>Store credit</span>
+                  <span className="num" style={{ color: "#a16207", fontWeight: 600 }}>
+                    −€{eur(creditUsed)}
+                  </span>
+                </div>
+              )}
+              <div className="kv" style={{ borderTop: "1px solid var(--vu-divider-strong)", height: "46px" }}>
+                <span className="bc" style={{ fontWeight: 700, fontSize: "16px" }}>Due now</span>
+                <span className="h num" style={{ fontSize: "32px" }}>€{eur(dueCents)}</span>
+              </div>
+            </div>
+
+            {/* Credit toggle */}
+            {creditAvailable > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <button
+                  className={`sw ${useCredit ? "on" : ""}`}
+                  role="switch"
+                  aria-checked={useCredit}
+                  aria-label="Use store credit"
+                  onClick={() => setUseCredit((v) => !v)}
+                />
+                <span style={{ flex: 1 }}>
+                  Use store credit{" "}
+                  <span className="num mut">(€{eur(creditAvailable)})</span>
+                </span>
+                <span className="mut num" style={{ fontSize: "12px" }}>
+                  {selDisplay.stock} in stock
+                </span>
               </div>
             )}
-            <p className="mut" style={{ fontSize: "12px", marginTop: "4px", textAlign: "center" }}>
-              Price is based on the cheapest available account that has the skin, and updates as
-              stock turns over. You get a full-access account with the named skin guaranteed.
-            </p>
-          </>
+
+            <div style={{ flex: 1 }} />
+
+            <button
+              className="btn btn-red btn-lg cut"
+              onClick={buyNow}
+              disabled={busy || selDisplay.stock === 0}
+            >
+              {busy ? "…" : selDisplay.stock === 0 ? "Sold out" : `Buy — €${eur(dueCents)}`}
+            </button>
+          </div>
         )}
-      </section>
+      </aside>
     </div>
   );
 }
 
 function BracketTile({
-  row,
-  busy,
-  onBuy,
+  row, region, selected, onPick,
 }: {
   row: BracketRow;
-  busy: boolean;
-  onBuy: () => void;
+  region: Region;
+  selected: boolean;
+  onPick: () => void;
 }) {
   const soldOut = row.available === 0;
   const hasDiscount = row.price.discountPct > 0;
   return (
     <button
       disabled={soldOut}
-      onClick={onBuy}
-      className="tile cs lift"
-      style={{
-        ["--tc" as string]: "var(--vu-red)",
-        padding: 0,
-      }}
+      onClick={onPick}
+      className={`tile cs ${selected ? "on" : ""}`}
+      style={{ ["--tc" as string]: "var(--vu-red)" }}
+      aria-label={`${row.label} skins`}
     >
       <span className="glow" />
       <span
@@ -785,77 +908,98 @@ function BracketTile({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          padding: "8px 10px 0",
+          padding: "10px 12px 0",
         }}
       >
-        <span className="bc" style={{ fontSize: "12px", fontWeight: 600, color: "var(--vu-ivory-dim)" }}>
-          Skin bracket
+        <span className="bc" style={{ fontSize: "13px", fontWeight: 600, color: "var(--vu-ivory-dim)" }}>
+          Random account
         </span>
-        <span className="rg">{row.region}</span>
+        <span className="rg">{region}</span>
       </span>
       <span
         style={{
           position: "relative",
           flex: 1,
-          minHeight: "80px",
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          padding: "8px",
         }}
       >
-        <span className="h num" style={{ fontSize: "34px", color: "#fff" }}>
+        <span className="h num" style={{ fontSize: "52px", color: "#fff" }}>
           {row.label}
         </span>
+        <span className="bc" style={{ fontSize: "15px", fontWeight: 600, color: "var(--vu-red)" }}>
+          Skins
+        </span>
       </span>
-      <span className="strip" style={{ padding: "6px 10px" }}>
-        <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-          {hasDiscount && !soldOut && (
-            <span
-              className="num"
-              style={{
-                textDecoration: "line-through",
-                color: "var(--vu-mute-soft)",
-                fontSize: "11px",
-              }}
-            >
-              {eur(row.price.publicCents)}
+      <span
+        style={{
+          position: "relative",
+          display: "flex",
+          justifyContent: "center",
+          gap: "14px",
+          padding: "0 0 8px",
+          fontSize: "12px",
+          color: "var(--vu-ivory-dim)",
+        }}
+      >
+        <span>
+          Available{" "}
+          <b
+            className="num"
+            style={{ color: soldOut ? "#f87171" : row.available < 3 ? "#fcd34d" : "#86efac" }}
+          >
+            {row.available}
+          </b>
+        </span>
+        <span>Delivery <b style={{ color: "#86efac" }}>Instant</b></span>
+      </span>
+      <span className="strip">
+        <span className="num" style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+          <span className="bc" style={{ fontWeight: 700, fontSize: "22px", color: "#fff" }}>
+            €{eur(row.price.finalCents)}
+          </span>
+          {hasDiscount && (
+            <span style={{ fontSize: "12px", color: "var(--vu-mute-soft)", textDecoration: "line-through" }}>
+              €{eur(row.price.publicCents)}
             </span>
           )}
-          <span className="bc num" style={{ fontWeight: 700, fontSize: "18px", color: "#fff" }}>
-            {soldOut ? "—" : eur(row.price.finalCents)}
-          </span>
         </span>
-        <span
-          className={`stk ${soldOut ? "out" : row.available < 3 ? "low" : "ok"}`}
-        >
-          {busy ? "…" : soldOut ? "SOLD OUT" : row.available < 3 ? `${row.available} left` : `${row.available} in stock`}
-        </span>
+        {hasDiscount && !soldOut && (
+          <span className="stk ok">−{Math.round(row.price.discountPct * 100)}%</span>
+        )}
       </span>
     </button>
   );
 }
 
 function SkinTile({
-  row,
-  busy,
-  onBuy,
+  row, region, selected, onPick,
 }: {
   row: FeaturedSkinRow;
-  busy: boolean;
-  onBuy: () => void;
+  region: Region;
+  selected: boolean;
+  onPick: () => void;
 }) {
   const soldOut = row.available === 0;
   const hasDiscount = row.discountPct > 0;
+  // Tier color: infer from skin name family
+  const tc = row.label.includes("Elderflame") || row.label.includes("Araxys")
+    ? "var(--tier-ultra)"
+    : row.label.includes("Oni") || row.label.includes("Reaver") || row.label.includes("Prime")
+    ? "var(--tier-premium)"
+    : row.label.includes("RGX") || row.label.includes("Glitchpop")
+    ? "var(--tier-exclusive)"
+    : "var(--tier-standard)";
+
   return (
     <button
       disabled={soldOut}
-      onClick={onBuy}
-      className="tile cs lift"
-      style={{
-        ["--tc" as string]: "var(--tier-premium)",
-        padding: 0,
-      }}
+      onClick={onPick}
+      className={`tile cs ${selected ? "on" : ""}`}
+      style={{ ["--tc" as string]: tc }}
+      aria-label={`${row.label} ${row.weapon}, from €${eur(row.finalCents)}`}
     >
       <span className="glow" />
       <span
@@ -867,49 +1011,77 @@ function SkinTile({
           padding: "8px 10px 0",
         }}
       >
-        <span
-          className="bc"
-          style={{ fontSize: "12px", fontWeight: 600, color: "var(--tier-premium)" }}
-        >
-          {row.weapon}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+          <span className="bc" style={{ fontSize: "12px", fontWeight: 600, color: tc }}>
+            {row.weapon}
+          </span>
         </span>
-        <span className="rg">EU</span>
+        <span className="rg">{region}</span>
       </span>
       <span
         style={{
           position: "relative",
           flex: 1,
-          minHeight: "80px",
+          minHeight: "34px",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: "12px",
+          padding: "2px 14px",
+          textAlign: "center",
         }}
       >
-        <span className="h" style={{ fontSize: "22px", color: "#fff", textAlign: "center" }}>
+        <span className="h" style={{ fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
           {row.label}
         </span>
       </span>
-      <span className="strip" style={{ padding: "6px 10px" }}>
-        <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-          {hasDiscount && !soldOut && (
-            <span
-              className="num"
-              style={{
-                textDecoration: "line-through",
-                color: "var(--vu-mute-soft)",
-                fontSize: "11px",
-              }}
-            >
-              {eur(row.publicCents)}
-            </span>
-          )}
-          <span className="bc num" style={{ fontWeight: 700, fontSize: "18px", color: "#fff" }}>
-            {soldOut ? "—" : eur(row.finalCents)}
+      <span
+        style={{
+          position: "relative",
+          display: "flex",
+          justifyContent: "space-between",
+          padding: "0 10px 6px",
+          fontSize: "11px",
+          color: "var(--vu-ivory-dim)",
+        }}
+      >
+        <span>
+          Matching stock{" "}
+          <b
+            className={`num stk ${soldOut ? "out" : row.available < 3 ? "low" : "ok"}`}
+            style={{ padding: "1px 5px" }}
+          >
+            {row.available}
+          </b>
+        </span>
+        <span>Instant</span>
+      </span>
+      <span className="strip">
+        <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <span className="bc" style={{ fontSize: "11px", color: "var(--vu-ivory-dim)", lineHeight: 1.1 }}>
+            {row.weapon}
+          </span>
+          <span
+            className="bc"
+            style={{
+              fontWeight: 700,
+              fontSize: "16px",
+              color: "#fff",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              lineHeight: 1.1,
+            }}
+          >
+            {row.label}
           </span>
         </span>
-        <span className={`stk ${soldOut ? "out" : row.available < 3 ? "low" : "ok"}`}>
-          {busy ? "…" : soldOut ? "N/A" : `${row.available} match`}
+        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <span className="bc" style={{ fontSize: "11px", color: "var(--vu-ivory-dim)", lineHeight: 1.1 }}>
+            from
+          </span>
+          <span className="bc num" style={{ fontWeight: 700, fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
+            €{eur(row.finalCents)}
+          </span>
         </span>
       </span>
     </button>
@@ -921,7 +1093,7 @@ function EmptyState({ region, forSkins = false }: { region: Region; forSkins?: b
     <div
       className="cut"
       style={{
-        padding: "60px 40px",
+        height: "100%",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -930,11 +1102,10 @@ function EmptyState({ region, forSkins = false }: { region: Region; forSkins?: b
         textAlign: "center",
         background: "var(--vu-navy)",
         color: "var(--vu-ivory)",
+        padding: "40px",
       }}
     >
-      <span className="h" style={{ fontSize: "44px", color: "var(--vu-red)" }}>
-        0
-      </span>
+      <span className="h" style={{ fontSize: "44px", color: "var(--vu-red)" }}>0</span>
       <span className="h" style={{ fontSize: "24px" }}>
         {forSkins ? `No matching skins in ${REGION_NAME[region]}` : `No stock in ${REGION_NAME[region]}`}
       </span>
@@ -951,11 +1122,12 @@ function SkeletonGrid({ rows, cols }: { rows: number; cols: number }) {
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        gridAutoRows: "minmax(160px, 1fr)",
         gap: "10px",
       }}
     >
       {Array.from({ length: rows * cols }).map((_, i) => (
-        <div key={i} className="skel cs" style={{ aspectRatio: "1.6 / 1" }} />
+        <div key={i} className="skel cs" />
       ))}
     </div>
   );
@@ -983,7 +1155,12 @@ const TIER_CARDS: TierSpec[] = [
     priceCents: 999,
     color: TIER_COLOR.standard,
     tagline: "The toolkit — cheaper accounts + the method.",
-    perks: ["10% off every account", "Discord + written method", "Monthly drops channel access"],
+    perks: [
+      "10% off every account",
+      "Discord members channel",
+      "Written method + guides",
+      "Monthly drops feed",
+    ],
   },
   {
     tier: "premium",
@@ -995,7 +1172,7 @@ const TIER_CARDS: TierSpec[] = [
     featured: true,
     perks: [
       "20% off every account",
-      "Server-side email delivery (no bookmarklet needed)",
+      "Server-side email delivery",
       "2-hour early access on new drops",
       "Custom stock alerts (/snipe)",
     ],
@@ -1009,7 +1186,7 @@ const TIER_CARDS: TierSpec[] = [
     badge: "Best value",
     perks: [
       "30% off every account",
-      "⚡ X-RAY — see every skin before you buy",
+      "⚡ X-RAY account inspector",
       "Auto-buy matching drops",
       "Priority replacement handling",
     ],
@@ -1039,56 +1216,97 @@ function SubscribeTab({ me, reload }: { me: Me; reload: () => void }) {
     }
   }
 
+  async function renew() {
+    setBusy(me.sub!.tier);
+    try {
+      const res = await fetch("/api/sub/renew", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "something went wrong");
+      window.location.href = data.invoiceUrl;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function cancel() {
     if (!confirm("Cancel your subscription? Your tier stays active until the end of the paid month.")) return;
     const res = await fetch("/api/sub/cancel", { method: "POST" });
     if (res.ok) reload();
   }
 
+  const currentTier = me.sub ? TIER_LABEL[me.sub.tier] : null;
+  const renewDate = me.sub ? new Date(me.sub.periodEnd).toLocaleDateString("en-GB", {
+    day: "numeric", month: "short", year: "numeric",
+  }) : null;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+    <div
+      style={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: "22px",
+      }}
+    >
+      {/* Current plan banner */}
       {me.sub && (
         <section
-          className="pn cut"
+          className="cut"
           style={{
-            padding: "20px 24px",
-            borderLeft: `4px solid ${TIER_COLOR[me.sub.tier]}`,
+            flex: "none",
+            padding: "14px 24px",
+            display: "flex",
+            alignItems: "center",
+            gap: "32px",
+            flexWrap: "wrap",
+            background: "var(--vu-navy)",
+            color: "var(--vu-ivory)",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "16px",
-            }}
-          >
-            <div>
-              <span className="lbl">Current plan</span>
-              <div
-                className="h"
-                style={{ fontSize: "28px", color: TIER_COLOR[me.sub.tier], marginTop: "4px" }}
-              >
-                {TIER_LABEL[me.sub.tier]}
-              </div>
-            </div>
-            <div>
-              <span className="lbl">
-                {me.sub.status === "grace" ? "Grace ends" : "Renews"}
-              </span>
-              <div className="num" style={{ fontSize: "20px", fontWeight: 700, marginTop: "4px" }}>
-                {new Date(me.sub.periodEnd).toLocaleDateString()}
-              </div>
-            </div>
-            <button
-              className="btn btn-soft cs"
-              onClick={cancel}
-              disabled={busy !== null}
-            >
-              Cancel
-            </button>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="lbl" style={{ color: "var(--vu-ivory-dim)", fontSize: "12px" }}>
+              Current plan
+            </span>
+            <span className="h" style={{ fontSize: "28px", color: TIER_COLOR[me.sub.tier] }}>
+              {currentTier}
+            </span>
           </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span className="lbl" style={{ color: "var(--vu-ivory-dim)", fontSize: "12px" }}>
+              {me.sub.status === "grace" ? "Grace ends" : "Renews"}
+            </span>
+            <span className="bc num" style={{ fontSize: "22px", fontWeight: 700 }}>
+              {renewDate}
+            </span>
+          </div>
+          {me.creditCents > 0 && (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <span className="lbl" style={{ color: "var(--vu-ivory-dim)", fontSize: "12px" }}>
+                Store credit
+              </span>
+              <span className="bc num" style={{ fontSize: "22px", fontWeight: 700, color: "#ffd400" }}>
+                €{eur(me.creditCents)}
+              </span>
+            </div>
+          )}
+          <div style={{ flex: 1 }} />
+          <button className="btn btn-red cs" onClick={renew} disabled={busy !== null}>
+            Renew now
+          </button>
+          <button
+            className="btn cs"
+            style={{
+              background: "transparent",
+              color: "var(--vu-ivory-dim)",
+              boxShadow: "inset 0 0 0 1px #34404d",
+            }}
+            onClick={cancel}
+            disabled={busy !== null}
+          >
+            Cancel
+          </button>
         </section>
       )}
 
@@ -1098,11 +1316,14 @@ function SubscribeTab({ me, reload }: { me: Me; reload: () => void }) {
         </div>
       )}
 
+      {/* Tier cards */}
       <div
         style={{
+          flex: 1,
+          minHeight: 0,
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: "20px",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: "16px",
           alignItems: "stretch",
         }}
       >
@@ -1110,97 +1331,174 @@ function SubscribeTab({ me, reload }: { me: Me; reload: () => void }) {
           const isCurrent =
             me.sub?.tier === t.tier &&
             (me.sub.status === "active" || me.sub.status === "grace");
+          // 3-up metric strip math
+          const saved30d = Math.round(t.priceCents * (TIER_DISCOUNT_PCT[t.tier] / 10) * 1.2); // rough est
+          const breakevenCents = Math.round(t.priceCents / (TIER_DISCOUNT_PCT[t.tier] / 100));
           return (
             <section
               key={t.tier}
-              className={`pn cut lift ${t.featured ? "feat" : ""}`}
+              className={`pn cut ${t.featured ? "feat" : "lift"}`}
               style={{
-                padding: "28px 24px",
                 display: "flex",
                 flexDirection: "column",
-                gap: "14px",
-                borderTop: `6px solid ${t.color}`,
+                minHeight: 0,
+                boxShadow: isCurrent
+                  ? `inset 0 0 0 2px ${t.color}`
+                  : t.featured
+                  ? `inset 0 0 0 2px ${t.color}`
+                  : "none",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div>
-                  <span className="lbl" style={{ color: t.color }}>
+              {/* Header */}
+              <div
+                style={{
+                  position: "relative",
+                  overflow: "hidden",
+                  background: "var(--vu-navy)",
+                  color: "#fff",
+                  padding: "16px 22px 14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                  borderBottom: `3px solid ${t.color}`,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    right: "-30px",
+                    top: "-20px",
+                    width: "140px",
+                    height: "140px",
+                    background: t.color,
+                    opacity: 0.12,
+                    transform: "rotate(45deg)",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span className="h" style={{ fontSize: "26px", color: t.color, letterSpacing: "0.06em" }}>
                     {t.name}
                   </span>
-                  <div className="h" style={{ fontSize: "44px", marginTop: "4px" }}>
-                    {eur(t.priceCents)}
-                    <span className="mut bc" style={{ fontSize: "14px", marginLeft: "6px" }}>
-                      / month
+                  <span style={{ display: "flex", gap: "4px" }}>
+                    {isCurrent && (
+                      <span className="bc" style={{ color: "#fff", fontWeight: 700, fontSize: "13px", background: "rgba(255,255,255,0.14)", padding: "2px 8px" }}>
+                        Your plan
+                      </span>
+                    )}
+                    {t.badge && !isCurrent && (
+                      <span className="bc" style={{ color: "var(--vu-navy)", fontWeight: 700, fontSize: "13px", background: t.color, padding: "2px 8px" }}>
+                        {t.badge}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: "8px" }}>
+                  <span className="h num" style={{ fontSize: "48px" }}>€{eur(t.priceCents)}</span>
+                  <span style={{ color: "var(--vu-ivory-dim)" }}>/ month</span>
+                </div>
+                <span style={{ position: "relative", fontSize: "13px", color: "#cbd5e1" }}>
+                  {t.tagline}
+                </span>
+              </div>
+
+              {/* Body */}
+              <div
+                style={{
+                  padding: "16px 22px 20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "14px",
+                  flex: 1,
+                  minHeight: 0,
+                }}
+              >
+                {/* 3-up metric strip */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.1fr)",
+                    background: "var(--vu-surface-alt)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column" }}>
+                    <span className="lbl" style={{ fontSize: "12px" }}>Discount</span>
+                    <span className="bc num" style={{ fontSize: "26px", fontWeight: 700, color: "var(--accent-success)", lineHeight: 1.1 }}>
+                      −{TIER_DISCOUNT_PCT[t.tier]}%
+                    </span>
+                  </div>
+                  <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--vu-divider-strong)" }}>
+                    <span className="lbl" style={{ fontSize: "12px" }}>On your 30d</span>
+                    <span className="bc num" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>
+                      −€{eur(saved30d)}
+                    </span>
+                  </div>
+                  <div style={{ padding: "8px 12px", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--vu-divider-strong)" }}>
+                    <span className="lbl" style={{ fontSize: "12px" }}>Pays off at</span>
+                    <span className="bc num" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>
+                      €{eur(breakevenCents)}
                     </span>
                   </div>
                 </div>
-                {t.badge && (
-                  <span
-                    className="bc"
-                    style={{
-                      background: t.color,
-                      color: "var(--vu-navy)",
-                      padding: "3px 10px",
-                      fontSize: "12px",
-                      fontWeight: 700,
-                    }}
+
+                {/* Perks */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {t.perks.map((p) => (
+                    <div
+                      key={p}
+                      style={{ display: "flex", gap: "12px", alignItems: "center" }}
+                    >
+                      <span
+                        className="cs"
+                        aria-hidden="true"
+                        style={{
+                          width: "22px",
+                          height: "22px",
+                          flex: "none",
+                          background: t.color,
+                          color: "var(--vu-navy)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M20 6 9 17l-5-5" />
+                        </svg>
+                      </span>
+                      <span style={{ fontWeight: 500 }}>{p}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ flex: 1 }} />
+
+                {isCurrent ? (
+                  <button className="btn btn-lg cut" disabled>Current plan</button>
+                ) : (
+                  <button
+                    className="btn btn-lg cut"
+                    style={{ background: t.color, color: "var(--vu-navy)" }}
+                    disabled={busy === t.tier}
+                    onClick={() => subscribe(t.tier)}
                   >
-                    {t.badge}
-                  </span>
+                    {busy === t.tier ? "…" : `Get ${t.name}`}
+                  </button>
                 )}
               </div>
-              <p className="mut" style={{ fontSize: "14px", margin: 0, minHeight: "40px" }}>
-                {t.tagline}
-              </p>
-              <ul
-                style={{
-                  listStyle: "none",
-                  padding: 0,
-                  margin: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "8px",
-                }}
-              >
-                {t.perks.map((p) => (
-                  <li key={p} style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke={t.color}
-                      strokeWidth="2.4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                      style={{ marginTop: "3px", flex: "none" }}
-                    >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    <span style={{ fontSize: "14px" }}>{p}</span>
-                  </li>
-                ))}
-              </ul>
-              <div style={{ flex: 1 }} />
-              <button
-                className="btn btn-lg cut"
-                disabled={busy === t.tier || isCurrent}
-                onClick={() => subscribe(t.tier)}
-                style={{
-                  background: isCurrent ? "var(--vu-divider-strong)" : t.color,
-                  color: isCurrent ? "var(--vu-mute)" : "var(--vu-navy)",
-                }}
-              >
-                {isCurrent ? "Current plan" : busy === t.tier ? "…" : `Get ${t.name}`}
-              </button>
             </section>
           );
         })}
       </div>
-      <p className="mut" style={{ fontSize: "12px", marginTop: "4px", textAlign: "center" }}>
-        Monthly, in crypto. Cancel anytime — tier stays until the end of the paid month.
-      </p>
     </div>
   );
 }
@@ -1219,21 +1517,33 @@ function PurchasesTab() {
       .catch(() => setOrders([]));
   }, []);
 
+  const spent = (orders ?? []).reduce((a, o) => a + o.price_cents, 0);
+  const deliveredCount = (orders ?? []).filter((o) => o.status === "delivered").length;
+
   if (orders === null) {
     return (
-      <div style={{ padding: "40px", textAlign: "center" }} className="bc mut">
-        Loading…
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span className="bc mut">Loading…</span>
       </div>
     );
   }
   if (orders.length === 0) {
     return (
-      <section className="pn cut" style={{ padding: "60px 40px", textAlign: "center" }}>
-        <span className="lbl">Your orders</span>
-        <div className="h" style={{ fontSize: "28px", marginTop: "12px" }}>
-          No purchases yet
-        </div>
-        <p className="mut" style={{ marginTop: "8px" }}>
+      <section
+        className="pn cut"
+        style={{
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "8px",
+          padding: "40px",
+          textAlign: "center",
+        }}
+      >
+        <span className="h" style={{ fontSize: "28px" }}>No purchases yet</span>
+        <p className="mut">
           Head to the <b>Stock</b> tab to grab your first account.
         </p>
       </section>
@@ -1241,47 +1551,76 @@ function PurchasesTab() {
   }
 
   return (
-    <section className="pn cut" style={{ padding: "18px 20px" }}>
-      <span className="lbl">Your orders</span>
-      <table className="tbl click" style={{ marginTop: "12px" }}>
-        <thead>
-          <tr>
-            <th>Account</th>
-            <th>Region</th>
-            <th>Date</th>
-            <th>Price</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((o) => (
-            <tr
-              key={o.id}
-              onClick={() => (window.location.href = `/orders/${o.id}`)}
-            >
-              <td>{o.products?.name ?? "Random account"}</td>
-              <td className="mut">{o.products?.region ?? "—"}</td>
-              <td className="mut num">
-                {new Date(o.created_at).toLocaleDateString()}
-              </td>
-              <td className="num" style={{ fontWeight: 600 }}>
-                {eur(o.price_cents)}
-              </td>
-              <td>
-                <span className={`pill ${orderPillClass(o.status)}`}>
-                  {o.status.replace("_", " ")}
-                </span>
-              </td>
-              <td>
-                <a href={`/orders/${o.id}`} className="bc" style={{ fontWeight: 700, color: "var(--accent-link)" }}>
-                  View →
-                </a>
-              </td>
+    <section
+      className="pn cut"
+      style={{
+        height: "100%",
+        padding: "18px 0 0",
+        display: "flex",
+        flexDirection: "column",
+        gap: "14px",
+        minHeight: 0,
+      }}
+    >
+      <div style={{ padding: "0 16px", display: "flex", gap: "28px", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span className="lbl" style={{ fontSize: "12px" }}>Orders</span>
+          <span className="h num" style={{ fontSize: "32px" }}>{orders.length}</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span className="lbl" style={{ fontSize: "12px" }}>Spent</span>
+          <span className="h num" style={{ fontSize: "32px" }}>€{eur(spent)}</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span className="lbl" style={{ fontSize: "12px" }}>Delivered</span>
+          <span className="h num" style={{ fontSize: "32px", color: "var(--accent-success)" }}>{deliveredCount}</span>
+        </div>
+      </div>
+      <div style={{ overflow: "auto", flex: 1, minHeight: 0 }}>
+        <table className="tbl click">
+          <thead>
+            <tr>
+              <th style={{ paddingLeft: "16px" }}>Account</th>
+              <th>Date</th>
+              <th style={{ textAlign: "right" }}>Price</th>
+              <th>Status</th>
+              <th style={{ textAlign: "right", paddingRight: "16px" }}></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {orders.map((o) => (
+              <tr key={o.id} onClick={() => (window.location.href = `/orders/${o.id}`)}>
+                <td style={{ paddingLeft: "16px" }}>
+                  <span style={{ display: "flex", flexDirection: "column" }}>
+                    <span className="bc" style={{ fontWeight: 700, fontSize: "17px", lineHeight: 1.1 }}>
+                      {o.products?.name ?? "Random account"}
+                    </span>
+                    <span className="mut mono" style={{ fontSize: "11px" }}>
+                      {o.id.slice(0, 8)} · {o.products?.region ?? "—"}
+                    </span>
+                  </span>
+                </td>
+                <td className="num mut">
+                  {new Date(o.created_at).toLocaleDateString()}
+                </td>
+                <td className="bc num" style={{ textAlign: "right", fontWeight: 700, fontSize: "18px" }}>
+                  €{eur(o.price_cents)}
+                </td>
+                <td>
+                  <span className={`pill ${orderPillClass(o.status)}`}>
+                    {o.status.replace("_", " ")}
+                  </span>
+                </td>
+                <td style={{ textAlign: "right", paddingRight: "16px" }}>
+                  <a href={`/orders/${o.id}`} className="bc" style={{ fontWeight: 700, color: "inherit" }}>
+                    View →
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -1301,46 +1640,96 @@ function orderPillClass(status: string): string {
 // X-RAY tab (Ultra-only)
 // ================================================================
 
-function XrayTab({ isUltra }: { isUltra: boolean }) {
+function XrayTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void }) {
   if (!isUltra) {
     return (
-      <section
-        className="pn cut"
+      <div
         style={{
-          padding: "60px 40px",
-          textAlign: "center",
-          borderTop: "6px solid #ffd400",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
-        <span className="lbl" style={{ color: "#ffd400" }}>
-          Ultra only
-        </span>
-        <div className="h" style={{ fontSize: "36px", marginTop: "12px" }}>
-          ⚡ X-RAY
-        </div>
-        <p className="mut" style={{ marginTop: "8px", maxWidth: "440px", margin: "8px auto 20px" }}>
-          See every skin on every account before you buy it. Ultra members can
-          inspect the full inventory, pick a specific account, and auto-buy.
-        </p>
-        <a
-          href="?tab=subscribe"
-          className="btn btn-gold cut"
-          style={{ height: "48px", padding: "0 32px" }}
+        <div
+          className="cut"
+          style={{
+            width: "460px",
+            maxWidth: "100%",
+            padding: "28px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+            background: "var(--vu-navy)",
+            color: "var(--vu-ivory)",
+          }}
         >
-          Upgrade to Ultra
-        </a>
-      </section>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span
+              className="cs"
+              style={{
+                width: "44px",
+                height: "44px",
+                background: "#ffd400",
+                color: "var(--vu-navy)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="4" y="11" width="16" height="10" rx="1" />
+                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+              </svg>
+            </span>
+            <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>
+              X-RAY is Ultra-only
+            </span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {[
+              "See every skin on every account before you buy",
+              "Pick the exact account you want",
+              "Auto-buy accounts matching your filters",
+              "Priority replacement handling",
+            ].map((p) => (
+              <span key={p} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffd400" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+                {p}
+              </span>
+            ))}
+          </div>
+          <button className="btn btn-gold cut btn-lg" onClick={onSub}>
+            Upgrade to Ultra — €59.99/mo
+          </button>
+        </div>
+      </div>
     );
   }
 
   return (
-    <section className="pn cut" style={{ padding: "20px 24px" }}>
-      <span className="lbl" style={{ color: "#ffd400" }}>
+    <section
+      className="pn cut"
+      style={{
+        height: "100%",
+        padding: "24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        gap: "12px",
+        flexDirection: "column",
+      }}
+    >
+      <span className="lbl" style={{ color: "#c9a800" }}>
         ⚡ X-RAY · account inspector
       </span>
-      <p className="mut" style={{ marginTop: "8px" }}>
-        Full inventory search is coming next — pick an account by its exact
-        skinset. Meanwhile, this tab is reserved for Ultra members.
+      <span className="h" style={{ fontSize: "28px" }}>Coming next</span>
+      <p className="mut" style={{ maxWidth: "440px" }}>
+        Full inventory search is landing in the next phase — pick accounts by
+        exact skinset, min skin count, rank, and region.
       </p>
     </section>
   );
@@ -1352,7 +1741,7 @@ function XrayTab({ isUltra }: { isUltra: boolean }) {
 
 function AdminTab() {
   return (
-    <section className="pn cut" style={{ padding: "20px 24px" }}>
+    <section className="pn cut" style={{ height: "100%", padding: "20px 24px" }}>
       <span className="lbl">Admin</span>
       <p className="mut" style={{ marginTop: "8px" }}>
         Admin controls — manage credit grants, review orders, trigger qvsp sync.

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { db } from "@/lib/supabase";
 import { decrypt } from "@/lib/crypto";
 import { getSessionUserId } from "@/lib/session";

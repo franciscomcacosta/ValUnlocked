@@ -73,6 +73,11 @@ interface FeaturedSkinRow {
   finalCents: number;
   savingsCents: number;
   discountPct: number;
+  // Added phase 2.2: art from valorant-api.com
+  icon?: string | null;
+  tier?: string | null;        // "Premium" | "Ultra" | ...
+  tierColor?: string | null;   // "#rrggbb"
+  tierIcon?: string | null;    // small badge
 }
 
 interface Order {
@@ -536,16 +541,22 @@ function StockTab({ me }: { me: Me }) {
         finalCents: sel.row.price.finalCents,
         saveCents: sel.row.price.savingsCents,
         stock: sel.row.available,
+        icon: null as string | null,
+        tierIcon: null as string | null,
+        tierLabel: null as string | null,
       };
     }
     return {
       kind: "skin" as const,
       name: `${sel.row.label} ${sel.row.weapon}`,
-      tc: "var(--tier-premium)",
+      tc: sel.row.tierColor ?? "var(--tier-premium)",
       oldCents: sel.row.publicCents,
       finalCents: sel.row.finalCents,
       saveCents: sel.row.savingsCents,
       stock: sel.row.available,
+      icon: sel.row.icon ?? null,
+      tierIcon: sel.row.tierIcon ?? null,
+      tierLabel: sel.row.tier ?? null,
     };
   }, [sel]);
 
@@ -785,20 +796,60 @@ function StockTab({ me }: { me: Me }) {
                   </span>
                 </div>
               ) : (
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#fff",
-                    padding: "16px",
-                  }}
-                >
-                  <span className="h" style={{ fontSize: "28px", textAlign: "center" }}>{selDisplay.name}</span>
-                </div>
+                <>
+                  {selDisplay.tierLabel && selDisplay.tierIcon && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        left: "12px",
+                        top: "10px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={selDisplay.tierIcon} alt="" style={{ width: "18px", height: "18px" }} />
+                      <span
+                        className="bc"
+                        style={{ fontSize: "14px", fontWeight: 700, color: selDisplay.tc }}
+                      >
+                        {selDisplay.tierLabel} edition
+                      </span>
+                    </span>
+                  )}
+                  {selDisplay.icon ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={selDisplay.icon}
+                      alt=""
+                      style={{
+                        position: "absolute",
+                        inset: "30px 20px 14px",
+                        width: "calc(100% - 40px)",
+                        height: "calc(100% - 44px)",
+                        objectFit: "contain",
+                        filter: "drop-shadow(0 6px 8px rgba(0,0,0,0.5))",
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#fff",
+                        padding: "16px",
+                      }}
+                    >
+                      <span className="h" style={{ fontSize: "28px", textAlign: "center" }}>
+                        {selDisplay.name}
+                      </span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -984,14 +1035,15 @@ function SkinTile({
 }) {
   const soldOut = row.available === 0;
   const hasDiscount = row.discountPct > 0;
-  // Tier color: infer from skin name family
-  const tc = row.label.includes("Elderflame") || row.label.includes("Araxys")
-    ? "var(--tier-ultra)"
-    : row.label.includes("Oni") || row.label.includes("Reaver") || row.label.includes("Prime")
-    ? "var(--tier-premium)"
-    : row.label.includes("RGX") || row.label.includes("Glitchpop")
-    ? "var(--tier-exclusive)"
-    : "var(--tier-standard)";
+  // Prefer real tier color from valorant-api; fall back to inferred.
+  const tc = row.tierColor
+    ?? (row.label.includes("Elderflame") || row.label.includes("Araxys")
+        ? "var(--tier-ultra)"
+        : row.label.includes("Oni") || row.label.includes("Reaver") || row.label.includes("Prime")
+        ? "var(--tier-premium)"
+        : row.label.includes("RGX") || row.label.includes("Glitchpop")
+        ? "var(--tier-exclusive)"
+        : "var(--tier-standard)");
 
   return (
     <button
@@ -1012,8 +1064,16 @@ function SkinTile({
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+          {row.tierIcon && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={row.tierIcon}
+              alt=""
+              style={{ width: "14px", height: "14px", objectFit: "contain" }}
+            />
+          )}
           <span className="bc" style={{ fontSize: "12px", fontWeight: 600, color: tc }}>
-            {row.weapon}
+            {row.tier ?? row.weapon}
           </span>
         </span>
         <span className="rg">{region}</span>
@@ -1030,9 +1090,25 @@ function SkinTile({
           textAlign: "center",
         }}
       >
-        <span className="h" style={{ fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
-          {row.label}
-        </span>
+        {row.icon ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="gun"
+            src={row.icon}
+            alt={`${row.label} ${row.weapon}`}
+            style={{
+              width: "100%",
+              height: "100%",
+              maxHeight: "66px",
+              objectFit: "contain",
+              filter: "drop-shadow(0 4px 6px rgba(0,0,0,0.5))",
+            }}
+          />
+        ) : (
+          <span className="h" style={{ fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
+            {row.label}
+          </span>
+        )}
       </span>
       <span
         style={{

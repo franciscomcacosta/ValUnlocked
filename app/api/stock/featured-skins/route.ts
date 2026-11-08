@@ -5,6 +5,7 @@
 import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
 import { FEATURED_SKINS, featuredPriceForUser, type SubTier } from "@/lib/pricing";
+import { lookupSkinArt } from "@/lib/valorant-assets";
 
 export const runtime = "nodejs";
 
@@ -42,6 +43,11 @@ export async function GET(req: Request) {
         .is("removed_at", null)
         .eq("claimed", false)
         .lte("public_at", new Date().toISOString());
+      // Enrich with art from valorant-api.com (cached 24h in-process).
+      // We look up by the label + weapon as "Reaver Vandal", which matches
+      // the community API's displayName exactly for named skins.
+      const art = await lookupSkinArt(`${skin.label} ${skin.weapon}`);
+
       if (error || !data || data.length === 0) {
         return {
           key: skin.label,
@@ -53,6 +59,10 @@ export async function GET(req: Request) {
           finalCents: 0,
           savingsCents: 0,
           discountPct: 0,
+          icon: art.icon,
+          tier: art.tierName,
+          tierColor: art.tierColor,
+          tierIcon: art.tierIcon,
         };
       }
       const prices = data.map((r) => r.qvsp_price_cents as number).filter((n) => Number.isFinite(n));
@@ -68,6 +78,10 @@ export async function GET(req: Request) {
         finalCents: p.finalCents,
         savingsCents: p.savingsCents,
         discountPct: p.discountPct,
+        icon: art.icon,
+        tier: art.tierName,
+        tierColor: art.tierColor,
+        tierIcon: art.tierIcon,
       };
     })
   );

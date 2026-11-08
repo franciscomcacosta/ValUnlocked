@@ -28,42 +28,49 @@ export async function GET(req: Request) {
     .maybeSingle();
   const tier = (sub?.tier ?? null) as SubTier | null;
 
-  // Pull available skinned stock, project only what we need for bucketing.
-  // Supabase JS can't GROUP BY arbitrary expressions, so we do bucket counts
-  // in-process. With ~11k rows and 6 brackets × 5 regions this is trivial.
-  // Query the base table directly (not the public view) because we need
-  // qvsp_price_cents for the cost-ceiling filter, and the public view hides
-  // cost by design. Cost never reaches the client — only aggregated counts.
-  let q = db
-    .from("qvsp_stock")
-    .select("region, skin_count, qvsp_price_cents")
-    .eq("kind", "skinned")
-    .is("reserved_order_id", null)
-    .is("removed_at", null)
-    .eq("claimed", false)
-    .lte("public_at", new Date().toISOString());
-  if (regionFilter) q = q.eq("region", regionFilter);
-  const { data, error } = await q;
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  // Pull available skinned stock. Supabase JS caps SELECT at 1000 rows by
+  // default, so we page through in batches of 1000 until we've got the full
+  // set. ~12k rows = ~12 round trips, each small. Keeps server-side logic
+  // simple and avoids a DB view we'd have to keep in sync with the schema.
+  const rows: Row[] = [];
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    let q = db
+      .from("qvsp_stock")
+      .select("region, skin_count, qvsp_price_cents")
+      .eq("kind", "skinned")
+      .is("reserved_order_id", null)
+      .is("removed_at", null)
+      .eq("claimed", false)
+      .lte("public_at", new Date().toISOString())
+      .range(offset, offset + PAGE - 1);
+    if (regionFilter) q = q.eq("region", regionFilter);
+    const { data, error } = await q;
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    const batch = (data ?? []) as Row[];
+    rows.push(...batch);
+    if (batch.length < PAGE) break;    // short batch = last page
+  }
 
   const counts: Record<string, Record<BracketName, number>> = {};
   for (const r of REGIONS) {
     counts[r] = {} as Record<BracketName, number>;
     for (const b of SKIN_BRACKETS) counts[r][b.name] = 0;
   }
-  for (const row of (data ?? []) as Row[]) {
+  for (const row of rows) {
     const region = row.region;
     if (!counts[region]) continue;
     const sc = row.skin_count ?? 0;
-    const cost = row.qvsp_price_cents ?? 0;
     for (const b of SKIN_BRACKETS) {
       if (sc >= b.minSkins && sc <= b.maxSkins) {
-        // Only count accounts whose qvsp cost keeps us profitable at this
-        // bracket's price. Over-budget accounts aren't eligible for bracket
-        // orders (they can still sell through Guaranteed Skins).
-        if (cost <= b.maxAcceptableCostCents) {
-          counts[region][b.name]++;
-        }
+        // Count every account in this bucket. The cost-ceiling filter used
+        // to run here, dropping any row whose qvsp cost exceeded the
+        // bracket's margin headroom — but that silently hid stock from
+        // users and was visually confusing (1 available when qvsp says
+        // 400). The reservation function in reserve_qvsp_stock() still
+        // enforces the ceiling at purchase time, so we never actually sell
+        // an unprofitable account; the UI just stops lying about supply.
+        counts[region][b.name]++;
         break;
       }
     }

@@ -87,25 +87,34 @@ export async function GET(req: Request) {
     .maybeSingle();
   const tier = (sub?.tier ?? null) as SubTier | null;
 
-  // Pull all skinned, available rows for the region.
-  const { data, error } = await db
-    .from("qvsp_stock")
-    .select("skins, qvsp_price_cents")
-    .eq("region", region)
-    .eq("kind", "skinned")
-    .is("reserved_order_id", null)
-    .is("removed_at", null)
-    .eq("claimed", false)
-    .lte("public_at", new Date().toISOString());
-
-  if (error) {
-    console.error("[all-skins] supabase error:", error.message);
-    return Response.json({ error: "db_error", detail: error.message }, { status: 500 });
+  // Pull all skinned, available rows for the region, paging around the
+  // Supabase JS 1000-row default cap.
+  type SkinRow = { skins: string[] | null; qvsp_price_cents: number };
+  const rows: SkinRow[] = [];
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await db
+      .from("qvsp_stock")
+      .select("skins, qvsp_price_cents")
+      .eq("region", region)
+      .eq("kind", "skinned")
+      .is("reserved_order_id", null)
+      .is("removed_at", null)
+      .eq("claimed", false)
+      .lte("public_at", new Date().toISOString())
+      .range(offset, offset + PAGE - 1);
+    if (error) {
+      console.error("[all-skins] supabase error:", error.message);
+      return Response.json({ error: "db_error", detail: error.message }, { status: 500 });
+    }
+    const batch = (data ?? []) as SkinRow[];
+    rows.push(...batch);
+    if (batch.length < PAGE) break;
   }
 
   // Aggregate: skinName → { count, cheapestCents }
   const agg = new Map<string, { count: number; cheapest: number }>();
-  for (const row of data ?? []) {
+  for (const row of rows) {
     const skins = (row.skins ?? []) as string[];
     const price = row.qvsp_price_cents as number;
     if (!Number.isFinite(price)) continue;

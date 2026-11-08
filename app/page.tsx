@@ -981,21 +981,31 @@ function StockTab({ me }: { me: Me }) {
   );
 }
 
-// Bracket → tier color mapping. Lower brackets are the standard red,
-// mid brackets lean pink (premium), higher lean orange/gold (exclusive/ultra).
-// Mirrors the content-tier colors used across the site so pricing feels
-// intuitively tiered by value.
-const BRACKET_COLOR: Record<string, string> = {
-  "1-25":    "var(--vu-red)",        // #ff4655
-  "26-50":   "var(--vu-red)",        // #ff4655
-  "51-100":  "var(--tier-premium)",  // #d1548d pink
-  "101-150": "var(--tier-exclusive)",// #f5955b orange
-  "151-200": "var(--tier-ultra)",    // #fad663 gold
-  "200+":    "var(--tier-ultra)",    // #fad663 gold
+// Bracket → tier visual mapping. Lower = standard red; higher = Valorant's
+// Premium/Exclusive/Ultra palette. Each bracket also gets an intensity
+// multiplier that drives the radial-gradient background behind the tile,
+// so a 200+ card doesn't just use gold text — it feels gold.
+type BracketVisual = {
+  color: string;              // text + accent
+  intensity: number;          // 0.0 – 1.0 background saturation
+  label: string;              // tier-ish copy shown under the range
 };
 
+const BRACKET_VISUAL: Record<string, BracketVisual> = {
+  "1-25":    { color: "var(--vu-red)",        intensity: 0.25, label: "Select"    },
+  "26-50":   { color: "var(--vu-red)",        intensity: 0.45, label: "Select+"   },
+  "51-100":  { color: "var(--tier-premium)",  intensity: 0.60, label: "Premium"   },
+  "101-150": { color: "var(--tier-exclusive)",intensity: 0.75, label: "Exclusive" },
+  "151-200": { color: "var(--tier-ultra)",    intensity: 0.88, label: "Ultra"     },
+  "200+":    { color: "var(--tier-ultra)",    intensity: 1.00, label: "Whale"     },
+};
+
+function bracketVisual(label: string): BracketVisual {
+  return BRACKET_VISUAL[label] ?? { color: "var(--vu-red)", intensity: 0.25, label: "" };
+}
+
 function bracketTierColor(label: string): string {
-  return BRACKET_COLOR[label] ?? "var(--vu-red)";
+  return bracketVisual(label).color;
 }
 
 function BracketTile({
@@ -1008,16 +1018,27 @@ function BracketTile({
 }) {
   const soldOut = row.available === 0;
   const hasDiscount = row.price.discountPct > 0;
-  const tc = bracketTierColor(row.label);
+  const vis = bracketVisual(row.label);
+  const tc = vis.color;
   return (
     <button
       disabled={soldOut}
       onClick={onPick}
       className={`tile cs ${selected ? "on" : ""}`}
-      style={{ ["--tc" as string]: tc }}
+      style={{
+        ["--tc" as string]: tc,
+        // Full radial-gradient tinted background that escalates with
+        // bracket intensity. Low brackets = subtle wash; Ultra/Whale =
+        // saturated gold aura that signals premium.
+        backgroundImage: soldOut
+          ? undefined
+          : `radial-gradient(circle at 50% 110%, color-mix(in srgb, ${tc} ${Math.round(
+              vis.intensity * 70
+            )}%, transparent) 0%, transparent 65%)`,
+      }}
       aria-label={`${row.label} skins`}
     >
-      <span className="glow" />
+      <span className="glow" style={{ opacity: Math.max(0.35, vis.intensity * 0.85) }} />
       <span
         style={{
           position: "relative",
@@ -1040,13 +1061,23 @@ function BracketTile({
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: "2px",
         }}
       >
-        <span className="h num" style={{ fontSize: "52px", color: "#fff" }}>
+        <span className="h num" style={{ fontSize: "52px", color: "#fff", lineHeight: 1 }}>
           {row.label}
         </span>
-        <span className="bc" style={{ fontSize: "15px", fontWeight: 600, color: tc }}>
-          Skins
+        <span
+          className="bc"
+          style={{
+            fontSize: "13px",
+            fontWeight: 700,
+            color: tc,
+            letterSpacing: "0.1em",
+            textShadow: `0 0 12px ${tc}aa`,
+          }}
+        >
+          {vis.label} · Skins
         </span>
       </span>
       <span

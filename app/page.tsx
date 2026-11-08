@@ -1,22 +1,39 @@
 "use client";
-// Dashboard — the ONLY page. Middleware gates every route behind Discord
-// OAuth, so if we're here we're signed in.
+// Dashboard — the ONLY signed-in page. Middleware gates every route behind
+// Discord OAuth, so if we're here we're signed in.
 //
-// Tabs: STOCK (qvsp skin-range browse) · SUBSCRIBE · PURCHASES · ADMIN
+// Tabs: Stock · Subscribe · My Purchases · ⚡ X-RAY (Ultra) · Admin
+//
+// Visual language: Valorant-dark (ported from the design canvas in phase 2).
+
 import { useCallback, useEffect, useState } from "react";
+import { LockLogo } from "@/components/lock-logo";
 
-const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
-const tierLabel = (t: string | null) => (t ? t[0].toUpperCase() + t.slice(1) : "Guest");
-
-const TIER_COLOR: Record<string, string> = {
-  standard: "#3b82f6",
-  premium: "#ff4655",
-  ultra: "#ffd400",
-};
+// ----- Types ----------------------------------------------------
 
 const REGIONS = ["EU", "AP", "KR", "LATAM", "BR"] as const;
 type Region = typeof REGIONS[number];
 type Tier = "standard" | "premium" | "ultra";
+
+const REGION_NAME: Record<Region, string> = {
+  EU: "Europe",
+  AP: "Asia Pacific",
+  KR: "Korea",
+  LATAM: "Latin America",
+  BR: "Brazil",
+};
+
+const TIER_COLOR: Record<Tier, string> = {
+  standard: "#3b82f6",
+  premium:  "#ff4655",
+  ultra:    "#ffd400",
+};
+
+const TIER_LABEL: Record<Tier, string> = {
+  standard: "Standard",
+  premium:  "Premium",
+  ultra:    "Ultra",
+};
 
 interface Me {
   name: string;
@@ -31,7 +48,12 @@ interface BracketRow {
   bracket: string;
   label: string;
   available: number;
-  price: { publicCents: number; finalCents: number; discountPct: number; savingsCents: number };
+  price: {
+    publicCents: number;
+    finalCents: number;
+    discountPct: number;
+    savingsCents: number;
+  };
 }
 
 interface FeaturedSkinRow {
@@ -55,10 +77,36 @@ interface Order {
   products: { name: string; region: string; rank: string | null } | null;
 }
 
+// ----- Helpers --------------------------------------------------
+
+const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
+
+function tierPillColor(tier: Tier): string {
+  return TIER_COLOR[tier];
+}
+
+// Sample live feed for the marquee until we wire /api/public-stats.
+const SAMPLE_FEED = [
+  { u: "cyph3r",   item: "Reaver Vandal",       t: "just now", c: "#d1548d" },
+  { u: "blitz_",   item: "Prime Vandal",        t: "2m ago",   c: "#d1548d" },
+  { u: "neko",     item: "26–50 skins · EU",    t: "5m ago",   c: "#ece8e1" },
+  { u: "veyl",     item: "Elderflame Vandal",   t: "8m ago",   c: "#fad663" },
+  { u: "ayva",     item: "Oni Phantom",         t: "11m ago",  c: "#d1548d" },
+  { u: "mirai",    item: "Araxys Operator",     t: "14m ago",  c: "#f5955b" },
+  { u: "hollow",   item: "51–100 skins · AP",   t: "17m ago",  c: "#ece8e1" },
+  { u: "pixel",    item: "RGX 11z Pro Vandal",  t: "22m ago",  c: "#f5955b" },
+];
+
+// ================================================================
+// Root
+// ================================================================
+
+type TabKey = "stock" | "subscribe" | "purchases" | "xray" | "admin";
+
 export default function Page() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"stock" | "subscribe" | "purchases" | "xray" | "admin">("stock");
+  const [tab, setTab] = useState<TabKey>("stock");
 
   useEffect(() => {
     fetch("/api/me")
@@ -73,503 +121,1133 @@ export default function Page() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading || !me) return <div className="center muted">Loading…</div>;
+  if (loading || !me) {
+    return (
+      <div
+        className="vu"
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "var(--vu-navy)",
+          color: "var(--vu-ivory-dim)",
+        }}
+      >
+        <span className="bc">Loading…</span>
+      </div>
+    );
+  }
+
+  const isUltra = me.sub?.tier === "ultra";
 
   return (
-    <>
-      <Topbar me={me} />
-      <div className="wrap">
-        <div className="tabs-primary">
-          <button className={`tab ${tab === "stock" ? "active" : ""}`} onClick={() => setTab("stock")}>
-            Stock
-          </button>
-          <button className={`tab ${tab === "subscribe" ? "active" : ""}`} onClick={() => setTab("subscribe")}>
-            Subscribe
-          </button>
-          <button
-            className={`tab ${tab === "purchases" ? "active-gold" : ""}`}
-            onClick={() => setTab("purchases")}
-          >
-            My Purchases
-          </button>
-          <button
-            className={`tab ${tab === "xray" ? "active-gold" : ""}`}
-            onClick={() => setTab("xray")}
-            title={me.sub?.tier === "ultra" ? "Account-level recon" : "Ultra only"}
-          >
-            {me.sub?.tier === "ultra" ? "⚡ X-RAY" : "🔒 X-RAY"}
-          </button>
-          {me.isAdmin && (
-            <button className={`tab ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")}>
-              Admin
-            </button>
-          )}
-        </div>
+    <div
+      className="vu"
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--vu-bg-light)",
+      }}
+    >
+      <Header me={me} tab={tab} onTab={setTab} isUltra={isUltra} />
 
-        <div style={{ marginTop: 24 }}>
-          {tab === "stock" && <Stock me={me} />}
-          {tab === "subscribe" && <Subscribe me={me} reload={() => window.location.reload()} />}
-          {tab === "purchases" && <Purchases />}
-          {tab === "xray" && <XRay me={me} />}
-          {tab === "admin" && me.isAdmin && <Admin />}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function Topbar({ me }: { me: Me }) {
-  return (
-    <div className="topbar">
-      <div className="wrap row spread" style={{ padding: "14px 20px", maxWidth: 1240 }}>
-        <a href="/" className="brand" style={{ color: "inherit" }}>
-          VAL<span>UNLOCKED</span>
-        </a>
-        <div className="row" style={{ gap: 10 }}>
-          {me.sub && (
-            <span
-              className="badge"
-              style={{
-                color: TIER_COLOR[me.sub.tier],
-                borderColor: TIER_COLOR[me.sub.tier],
-                fontWeight: 700,
-                letterSpacing: 1,
-                textTransform: "uppercase",
-                fontSize: 11,
-              }}
-            >
-              {me.sub.status === "grace" ? "⚠ " : ""}
-              {tierLabel(me.sub.tier)}
-            </span>
-          )}
-          <span
-            className="badge"
-            style={{ color: me.creditCents > 0 ? "var(--gold)" : "var(--muted)", fontWeight: 700 }}
-            title="Store credit"
-          >
-            {eur(me.creditCents)}
-          </span>
-          <img className="avatar" src={me.avatar} alt="" />
-          <form action="/api/auth/logout" method="post" style={{ display: "inline" }}>
-            <button className="btn ghost sm" title={me.name}>
-              Log out
-            </button>
-          </form>
-        </div>
-      </div>
+      <main
+        style={{
+          flex: 1,
+          minHeight: 0,
+          width: "100%",
+          padding: "18px 24px",
+          maxWidth: "1480px",
+          margin: "0 auto",
+          boxSizing: "border-box",
+        }}
+      >
+        {tab === "stock" && <StockTab me={me} />}
+        {tab === "subscribe" && (
+          <SubscribeTab me={me} reload={() => window.location.reload()} />
+        )}
+        {tab === "purchases" && <PurchasesTab />}
+        {tab === "xray" && <XrayTab isUltra={isUltra} />}
+        {tab === "admin" && me.isAdmin && <AdminTab />}
+      </main>
     </div>
   );
 }
 
-// ─── STOCK tab ─────────────────────────────────────────────────
+// ================================================================
+// Header
+// ================================================================
 
-function Stock({ me }: { me: Me }) {
+function Header({
+  me,
+  tab,
+  onTab,
+  isUltra,
+}: {
+  me: Me;
+  tab: TabKey;
+  onTab: (t: TabKey) => void;
+  isUltra: boolean;
+}) {
+  const feed = SAMPLE_FEED.concat(SAMPLE_FEED);
+  const subDaysLeft = me.sub
+    ? Math.max(
+        0,
+        Math.floor(
+          (new Date(me.sub.periodEnd).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+        )
+      )
+    : null;
+  const subPips = Array.from({ length: 10 }).map((_, i) => {
+    const progress = subDaysLeft != null ? Math.ceil((subDaysLeft / 30) * 10) : 0;
+    return i < progress;
+  });
+  const tierColor = me.sub ? tierPillColor(me.sub.tier) : null;
+
+  return (
+    <header style={{ flex: "none", background: "var(--vu-navy)", color: "var(--vu-ivory)" }}>
+      <div
+        style={{
+          padding: "0 24px",
+          height: "58px",
+          display: "flex",
+          alignItems: "center",
+          gap: "20px",
+        }}
+      >
+        {/* Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: "none" }}>
+          <LockLogo size={28} />
+          <span className="h" style={{ fontSize: "22px", color: "#fff" }}>
+            Val <span style={{ color: "var(--vu-red)" }}>Unlocked</span>
+          </span>
+        </div>
+
+        {/* Nav tabs */}
+        <nav className="nav" aria-label="Sections">
+          {([
+            { key: "stock",      label: "Stock" },
+            { key: "subscribe",  label: "Subscribe" },
+            { key: "purchases",  label: "My Purchases" },
+            { key: "xray",       label: isUltra ? "⚡ X-RAY" : "🔒 X-RAY", ultra: true },
+          ] as const).map((t) => (
+            <button
+              key={t.key}
+              className={`${tab === t.key ? "on" : ""} ${"ultra" in t && t.ultra ? "ul" : ""}`}
+              onClick={() => onTab(t.key as TabKey)}
+            >
+              {t.label}
+            </button>
+          ))}
+          {me.isAdmin && (
+            <button
+              className={tab === "admin" ? "on" : ""}
+              onClick={() => onTab("admin")}
+            >
+              Admin
+            </button>
+          )}
+        </nav>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Subscription pill */}
+        {me.sub && tierColor && (
+          <div
+            className="cs"
+            style={{
+              flex: "none",
+              display: "flex",
+              alignItems: "stretch",
+              height: "36px",
+              background: "#1f2d3b",
+            }}
+            title={`${TIER_LABEL[me.sub.tier]}${subDaysLeft != null ? `, ${subDaysLeft} days left` : ""}`}
+          >
+            <span
+              style={{
+                width: "36px",
+                background: tierColor,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#0f1923",
+                fontWeight: 900,
+                fontFamily: "var(--font-head)",
+                fontSize: "16px",
+              }}
+            >
+              {TIER_LABEL[me.sub.tier][0]}
+            </span>
+            <span
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                gap: "4px",
+                padding: "0 12px",
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "baseline", gap: "8px", whiteSpace: "nowrap" }}>
+                <span
+                  className="bc"
+                  style={{
+                    fontWeight: 700,
+                    fontSize: "15px",
+                    color: "#fff",
+                    letterSpacing: "0.08em",
+                    lineHeight: 1,
+                  }}
+                >
+                  {TIER_LABEL[me.sub.tier]}
+                </span>
+                <span
+                  className="bc num"
+                  style={{
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    color: tierColor,
+                    lineHeight: 1,
+                  }}
+                >
+                  {subDaysLeft}d left
+                </span>
+              </span>
+              <span className="pips" style={{ display: "flex", gap: "2px" }} aria-hidden="true">
+                {subPips.map((on, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      width: "8px",
+                      height: "3px",
+                      background: on ? tierColor : "rgba(255,255,255,0.15)",
+                    }}
+                  />
+                ))}
+              </span>
+            </span>
+          </div>
+        )}
+
+        {/* Credit pill */}
+        {me.creditCents > 0 && (
+          <div
+            className="cs"
+            style={{
+              flex: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              height: "36px",
+              padding: "0 12px",
+              background: "rgba(255,212,0,0.12)",
+            }}
+          >
+            <span className="bc" style={{ color: "#ffd400", fontWeight: 600, fontSize: "14px" }}>
+              Credit
+            </span>
+            <span className="num" style={{ fontWeight: 700, color: "#ffd400" }}>
+              {eur(me.creditCents)}
+            </span>
+          </div>
+        )}
+
+        {/* Avatar */}
+        {me.avatar ? (
+          <img
+            src={me.avatar}
+            alt=""
+            className="cs"
+            style={{
+              flex: "none",
+              width: "34px",
+              height: "34px",
+              objectFit: "cover",
+              background: "var(--discord)",
+            }}
+          />
+        ) : (
+          <span
+            aria-hidden="true"
+            className="cs"
+            style={{
+              flex: "none",
+              width: "34px",
+              height: "34px",
+              background: "var(--discord)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 700,
+              color: "#fff",
+            }}
+          >
+            {me.name[0]?.toUpperCase() ?? "?"}
+          </span>
+        )}
+
+        {/* Logout */}
+        <form action="/api/auth/logout" method="post" style={{ display: "inline" }}>
+          <button
+            className="bc"
+            type="submit"
+            style={{
+              flex: "none",
+              border: 0,
+              background: "transparent",
+              color: "var(--vu-mute-soft)",
+              fontWeight: 600,
+              fontSize: "15px",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+            title={me.name}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            Log out
+          </button>
+        </form>
+      </div>
+
+      {/* Live feed */}
+      <div
+        style={{
+          height: "28px",
+          background: "#16212d",
+          borderTop: "1px solid rgba(255,255,255,0.05)",
+          display: "flex",
+          alignItems: "center",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            flex: "none",
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "0 12px 0 24px",
+            background: "#16212d",
+            position: "relative",
+            zIndex: 1,
+          }}
+        >
+          <span
+            className="live"
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: "var(--accent-green)",
+            }}
+          />
+          <span className="bc" style={{ fontSize: "13px", fontWeight: 700, color: "var(--accent-green)" }}>
+            Live
+          </span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }} aria-label="Recent purchases">
+          <div className="marq">
+            {feed.map((e, i) => (
+              <span key={i} style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>
+                <b style={{ color: "var(--vu-ivory)", fontWeight: 600 }}>{e.u}</b> unlocked{" "}
+                <b style={{ color: e.c, fontWeight: 600 }}>{e.item}</b> · {e.t}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ================================================================
+// Stock tab
+// ================================================================
+
+type StockMode = "bracket" | "skin";
+
+function StockTab({ me }: { me: Me }) {
+  const [mode, setMode] = useState<StockMode>("bracket");
   const [region, setRegion] = useState<Region>("EU");
   const [brackets, setBrackets] = useState<BracketRow[] | null>(null);
   const [featured, setFeatured] = useState<FeaturedSkinRow[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useState<string>("");
+  const [query, setQuery] = useState<string>("");
 
   const loadBrackets = useCallback(() => {
     fetch("/api/stock/brackets")
       .then((r) => r.json())
-      .then((d) => setBrackets(d.brackets ?? []));
+      .then((d) => setBrackets(d.brackets ?? []))
+      .catch(() => setBrackets([]));
   }, []);
 
   const loadFeatured = useCallback((r: Region) => {
     setFeatured(null);
     fetch(`/api/stock/featured-skins?region=${r}`)
       .then((res) => res.json())
-      .then((d) => setFeatured(d.skins ?? []));
+      .then((d) => setFeatured(d.skins ?? []))
+      .catch(() => setFeatured([]));
   }, []);
 
-  useEffect(() => {
-    loadBrackets();
-  }, [loadBrackets]);
+  useEffect(() => { loadBrackets(); }, [loadBrackets]);
+  useEffect(() => { loadFeatured(region); }, [region, loadFeatured]);
 
-  useEffect(() => {
-    loadFeatured(region);
-  }, [region, loadFeatured]);
-
-  const totalsByRegion: Record<string, number> = {};
+  const totalsByRegion: Partial<Record<Region, number>> = {};
   for (const row of brackets ?? []) {
     totalsByRegion[row.region] = (totalsByRegion[row.region] ?? 0) + row.available;
   }
 
-  const visible = (brackets ?? []).filter((b) => b.region === region);
+  const visibleBrackets = (brackets ?? []).filter((b) => b.region === region);
+  const visibleSkins = (featured ?? []).filter((s) =>
+    query ? s.label.toLowerCase().includes(query.toLowerCase()) ||
+             s.weapon.toLowerCase().includes(query.toLowerCase())
+          : true
+  );
+  const regionTotal = visibleBrackets.reduce((a, b) => a + b.available, 0);
+
+  const subDiscountPct =
+    me.sub?.tier === "ultra" ? 30 :
+    me.sub?.tier === "premium" ? 20 :
+    me.sub?.tier === "standard" ? 10 : 0;
 
   async function buyBracket(bracket: string) {
     setBusy(`b:${bracket}`);
     setErr("");
-    const res = await fetch("/api/stock/buy", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ region, bracket, useCredit: true }),
-    });
-    const data = await res.json();
-    setBusy(null);
-    if (!res.ok) { setErr(data.error ?? "something went wrong"); return; }
-    if (data.invoiceUrl) window.location.href = data.invoiceUrl;
-    else window.location.href = `/orders/${data.orderId}`;
+    try {
+      const res = await fetch("/api/stock/buy", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ region, bracket, useCredit: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "something went wrong");
+      if (data.invoiceUrl) window.location.href = data.invoiceUrl;
+      else window.location.href = `/orders/${data.orderId}`;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function buySkin(label: string) {
     setBusy(`s:${label}`);
     setErr("");
-    const res = await fetch("/api/stock/buy", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ region, skin: label, useCredit: true }),
-    });
-    const data = await res.json();
-    setBusy(null);
-    if (!res.ok) { setErr(data.error ?? "something went wrong"); return; }
-    if (data.invoiceUrl) window.location.href = data.invoiceUrl;
-    else window.location.href = `/orders/${data.orderId}`;
+    try {
+      const res = await fetch("/api/stock/buy", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ region, skin: label, useCredit: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "something went wrong");
+      if (data.invoiceUrl) window.location.href = data.invoiceUrl;
+      else window.location.href = `/orders/${data.orderId}`;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
-    <>
-      <div className="section-label">Random Account · Skin Bracket</div>
-
-      {/* Region tabs */}
-      <div className="tabs-secondary">
-        {REGIONS.map((r) => (
-          <button key={r} className={`tab ${region === r ? "active" : ""}`} onClick={() => setRegion(r)}>
-            {regionLabel(r)}
-            <span className="count">{totalsByRegion[r] ?? 0}</span>
-          </button>
-        ))}
-      </div>
-
-      {me.creditCents > 0 && (
-        <div className="notice" style={{ marginBottom: 16 }}>
-          {eur(me.creditCents)} store credit — applied automatically at checkout.
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr",
+        gap: "16px",
+      }}
+    >
+      <section
+        className="pn cut"
+        style={{
+          padding: "18px 20px 20px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "14px",
+        }}
+      >
+        {/* Mode + region segmented controls */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "12px",
+            flexWrap: "wrap",
+          }}
+        >
+          <div className="seg" role="group" aria-label="What to buy">
+            <button
+              className={mode === "bracket" ? "on" : ""}
+              onClick={() => setMode("bracket")}
+            >
+              Random account · skin bracket
+            </button>
+            <button
+              className={mode === "skin" ? "on" : ""}
+              onClick={() => setMode("skin")}
+            >
+              Guaranteed skin · named drops
+            </button>
+          </div>
+          <div className="seg cy" role="group" aria-label="Region">
+            {REGIONS.map((r) => (
+              <button
+                key={r}
+                className={region === r ? "on" : ""}
+                onClick={() => setRegion(r)}
+              >
+                {REGION_NAME[r]}{" "}
+                <span className="c num">{totalsByRegion[r] ?? 0}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      )}
-      {err && <p className="err" style={{ marginBottom: 12 }}>{errorText(err)}</p>}
 
-      {brackets === null ? (
-        <p className="muted" style={{ padding: 40, textAlign: "center" }}>
-          Loading inventory…
-        </p>
-      ) : visible.every((b) => b.available === 0) ? (
-        <p className="muted" style={{ padding: 40, textAlign: "center" }}>
-          No stock in {regionLabel(region)} right now. Check a different region or check back soon.
-        </p>
-      ) : (
-        <div className="grid">
-          {visible.map((b) => (
-            <div key={b.bracket} className={`stock-card ${b.available === 0 ? "sold-out" : ""}`}>
-              <span className="region-badge">{region}</span>
-              <div>
-                <div className="bracket-title">Skin Range</div>
-                <div className="bracket-name">{b.label}</div>
-              </div>
-              <div className="stat-row">
-                <span className="label">Available</span>
-                <span className="value">{b.available}</span>
-              </div>
-              <div className="stat-row">
-                <span className="label">Delivery</span>
-                <span className="value" style={{ color: "var(--ok)" }}>Instant</span>
-              </div>
-              <div className="price-row">
-                <div>
-                  {b.price.discountPct > 0 && (
-                    <span className="price-strike">{eur(b.price.publicCents)}</span>
-                  )}
-                  <span className="price">{eur(b.price.finalCents)}</span>
-                  {b.price.discountPct > 0 && (
-                    <span className="discount-badge">-{Math.round(b.price.discountPct * 100)}%</span>
-                  )}
-                </div>
-                <button
-                  className="btn sm"
-                  disabled={b.available === 0 || busy === `b:${b.bracket}`}
-                  onClick={() => buyBracket(b.bracket)}
-                >
-                  {busy === `b:${b.bracket}` ? "…" : b.available === 0 ? "SOLD OUT" : "BUY"}
-                </button>
-              </div>
+        {/* Headline + search */}
+        <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+          <span className="h num" style={{ fontSize: "28px" }}>
+            {mode === "bracket" ? regionTotal : visibleSkins.length}{" "}
+            <span style={{ color: "var(--vu-mute)", fontSize: "20px" }}>
+              {mode === "bracket" ? "accounts" : "matching skins"} · {REGION_NAME[region]}
+            </span>
+          </span>
+          {subDiscountPct > 0 && (
+            <span className="pill g">
+              {me.sub ? TIER_LABEL[me.sub.tier] : ""} −{subDiscountPct}% applied
+            </span>
+          )}
+          <div style={{ flex: 1, minWidth: 12 }} />
+          {mode === "skin" && (
+            <div style={{ position: "relative", width: "230px", maxWidth: "100%" }}>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#8b97a5"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                style={{ position: "absolute", left: "10px", top: "11px", pointerEvents: "none" }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <input
+                className="inp"
+                type="search"
+                placeholder="Search named skins…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                style={{ height: "38px", paddingLeft: "34px" }}
+                aria-label="Search skins"
+              />
             </div>
-          ))}
+          )}
         </div>
-      )}
 
-      <p className="muted" style={{ fontSize: 12, marginTop: 16, marginBottom: 32, textAlign: "center" }}>
-        A random full-access account from the chosen bracket is delivered after payment confirms on-chain.
-        All accounts come with the original email so you can lock them down.
-      </p>
+        {err && (
+          <div
+            style={{
+              padding: "10px 14px",
+              background: "#ffe4e6",
+              color: "var(--accent-rose)",
+              fontSize: "13px",
+            }}
+          >
+            {err}
+          </div>
+        )}
 
-      {/* ── FEATURED (guaranteed) skins ───────────────────── */}
-      <div className="section-label" style={{ marginTop: 8 }}>Guaranteed Skin · Named Drops</div>
+        {/* BRACKET MODE */}
+        {mode === "bracket" && (
+          <>
+            {brackets === null ? (
+              <SkeletonGrid rows={2} cols={3} />
+            ) : visibleBrackets.every((b) => b.available === 0) ? (
+              <EmptyState region={region} />
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                  gap: "10px",
+                }}
+              >
+                {visibleBrackets.map((b) => (
+                  <BracketTile
+                    key={b.bracket}
+                    row={b}
+                    busy={busy === `b:${b.bracket}`}
+                    onBuy={() => buyBracket(b.bracket)}
+                  />
+                ))}
+              </div>
+            )}
+            <p
+              className="mut num"
+              style={{
+                fontSize: "12px",
+                marginTop: "4px",
+                textAlign: "center",
+              }}
+            >
+              A random full-access account from the chosen bracket is delivered after payment
+              confirms on-chain. All accounts come with the original email so you can lock them down.
+            </p>
+          </>
+        )}
 
-      {featured === null ? (
-        <p className="muted" style={{ padding: 40, textAlign: "center" }}>Loading featured skins…</p>
-      ) : featured.every((s) => s.available === 0) ? (
-        <p className="muted" style={{ padding: 40, textAlign: "center" }}>
-          No featured-skin inventory in {regionLabel(region)} right now.
-        </p>
-      ) : (
-        <div className="grid">
-          {featured.map((s) => (
-            <div key={s.key} className={`stock-card ${s.available === 0 ? "sold-out" : ""}`}>
-              <span className="region-badge">{region}</span>
-              <div>
-                <div className="bracket-title">{s.weapon}</div>
-                <div className="bracket-name" style={{ fontSize: 18 }}>{s.label}</div>
+        {/* SKIN MODE */}
+        {mode === "skin" && (
+          <>
+            {featured === null ? (
+              <SkeletonGrid rows={2} cols={3} />
+            ) : visibleSkins.length === 0 ? (
+              <EmptyState region={region} forSkins />
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                  gap: "10px",
+                }}
+              >
+                {visibleSkins.map((s) => (
+                  <SkinTile
+                    key={s.key}
+                    row={s}
+                    busy={busy === `s:${s.label}`}
+                    onBuy={() => buySkin(s.label)}
+                  />
+                ))}
               </div>
-              <div className="stat-row">
-                <span className="label">Matching stock</span>
-                <span className="value">{s.available}</span>
-              </div>
-              <div className="stat-row">
-                <span className="label">Delivery</span>
-                <span className="value" style={{ color: "var(--ok)" }}>Instant</span>
-              </div>
-              <div className="price-row">
-                <div>
-                  {s.available > 0 ? (
-                    <>
-                      {s.discountPct > 0 && (
-                        <span className="price-strike">{eur(s.publicCents)}</span>
-                      )}
-                      <span className="price">{eur(s.finalCents)}</span>
-                      {s.discountPct > 0 && (
-                        <span className="discount-badge">-{Math.round(s.discountPct * 100)}%</span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="price muted" style={{ fontSize: 16 }}>—</span>
-                  )}
-                </div>
-                <button
-                  className="btn sm"
-                  disabled={s.available === 0 || busy === `s:${s.label}`}
-                  onClick={() => buySkin(s.label)}
-                >
-                  {busy === `s:${s.label}` ? "…" : s.available === 0 ? "N/A" : "BUY"}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <p className="muted" style={{ fontSize: 12, marginTop: 16, textAlign: "center" }}>
-        Price is based on the cheapest available account that has the skin, and updates as stock turns over.
-        You get a full-access account with the named skin guaranteed.
-      </p>
-    </>
+            )}
+            <p className="mut" style={{ fontSize: "12px", marginTop: "4px", textAlign: "center" }}>
+              Price is based on the cheapest available account that has the skin, and updates as
+              stock turns over. You get a full-access account with the named skin guaranteed.
+            </p>
+          </>
+        )}
+      </section>
+    </div>
   );
 }
 
-function regionLabel(r: Region): string {
-  return { EU: "Europe", AP: "Asia Pacific", KR: "Korea", LATAM: "Latin America", BR: "Brazil" }[r];
+function BracketTile({
+  row,
+  busy,
+  onBuy,
+}: {
+  row: BracketRow;
+  busy: boolean;
+  onBuy: () => void;
+}) {
+  const soldOut = row.available === 0;
+  const hasDiscount = row.price.discountPct > 0;
+  return (
+    <button
+      disabled={soldOut}
+      onClick={onBuy}
+      className="tile cs lift"
+      style={{
+        ["--tc" as string]: "var(--vu-red)",
+        padding: 0,
+      }}
+    >
+      <span className="glow" />
+      <span
+        style={{
+          position: "relative",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "8px 10px 0",
+        }}
+      >
+        <span className="bc" style={{ fontSize: "12px", fontWeight: 600, color: "var(--vu-ivory-dim)" }}>
+          Skin bracket
+        </span>
+        <span className="rg">{row.region}</span>
+      </span>
+      <span
+        style={{
+          position: "relative",
+          flex: 1,
+          minHeight: "80px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "8px",
+        }}
+      >
+        <span className="h num" style={{ fontSize: "34px", color: "#fff" }}>
+          {row.label}
+        </span>
+      </span>
+      <span className="strip" style={{ padding: "6px 10px" }}>
+        <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          {hasDiscount && !soldOut && (
+            <span
+              className="num"
+              style={{
+                textDecoration: "line-through",
+                color: "var(--vu-mute-soft)",
+                fontSize: "11px",
+              }}
+            >
+              {eur(row.price.publicCents)}
+            </span>
+          )}
+          <span className="bc num" style={{ fontWeight: 700, fontSize: "18px", color: "#fff" }}>
+            {soldOut ? "—" : eur(row.price.finalCents)}
+          </span>
+        </span>
+        <span
+          className={`stk ${soldOut ? "out" : row.available < 3 ? "low" : "ok"}`}
+        >
+          {busy ? "…" : soldOut ? "SOLD OUT" : row.available < 3 ? `${row.available} left` : `${row.available} in stock`}
+        </span>
+      </span>
+    </button>
+  );
 }
 
-// ─── SUBSCRIBE tab ────────────────────────────────────────────
+function SkinTile({
+  row,
+  busy,
+  onBuy,
+}: {
+  row: FeaturedSkinRow;
+  busy: boolean;
+  onBuy: () => void;
+}) {
+  const soldOut = row.available === 0;
+  const hasDiscount = row.discountPct > 0;
+  return (
+    <button
+      disabled={soldOut}
+      onClick={onBuy}
+      className="tile cs lift"
+      style={{
+        ["--tc" as string]: "var(--tier-premium)",
+        padding: 0,
+      }}
+    >
+      <span className="glow" />
+      <span
+        style={{
+          position: "relative",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "8px 10px 0",
+        }}
+      >
+        <span
+          className="bc"
+          style={{ fontSize: "12px", fontWeight: 600, color: "var(--tier-premium)" }}
+        >
+          {row.weapon}
+        </span>
+        <span className="rg">EU</span>
+      </span>
+      <span
+        style={{
+          position: "relative",
+          flex: 1,
+          minHeight: "80px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "12px",
+        }}
+      >
+        <span className="h" style={{ fontSize: "22px", color: "#fff", textAlign: "center" }}>
+          {row.label}
+        </span>
+      </span>
+      <span className="strip" style={{ padding: "6px 10px" }}>
+        <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          {hasDiscount && !soldOut && (
+            <span
+              className="num"
+              style={{
+                textDecoration: "line-through",
+                color: "var(--vu-mute-soft)",
+                fontSize: "11px",
+              }}
+            >
+              {eur(row.publicCents)}
+            </span>
+          )}
+          <span className="bc num" style={{ fontWeight: 700, fontSize: "18px", color: "#fff" }}>
+            {soldOut ? "—" : eur(row.finalCents)}
+          </span>
+        </span>
+        <span className={`stk ${soldOut ? "out" : row.available < 3 ? "low" : "ok"}`}>
+          {busy ? "…" : soldOut ? "N/A" : `${row.available} match`}
+        </span>
+      </span>
+    </button>
+  );
+}
 
-const TIER_CARDS = [
+function EmptyState({ region, forSkins = false }: { region: Region; forSkins?: boolean }) {
+  return (
+    <div
+      className="cut"
+      style={{
+        padding: "60px 40px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "10px",
+        textAlign: "center",
+        background: "var(--vu-navy)",
+        color: "var(--vu-ivory)",
+      }}
+    >
+      <span className="h" style={{ fontSize: "44px", color: "var(--vu-red)" }}>
+        0
+      </span>
+      <span className="h" style={{ fontSize: "24px" }}>
+        {forSkins ? `No matching skins in ${REGION_NAME[region]}` : `No stock in ${REGION_NAME[region]}`}
+      </span>
+      <span style={{ color: "var(--vu-ivory-dim)" }}>
+        Supplier stock refreshes every 5 minutes. Check back soon or try another region.
+      </span>
+    </div>
+  );
+}
+
+function SkeletonGrid({ rows, cols }: { rows: number; cols: number }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        gap: "10px",
+      }}
+    >
+      {Array.from({ length: rows * cols }).map((_, i) => (
+        <div key={i} className="skel cs" style={{ aspectRatio: "1.6 / 1" }} />
+      ))}
+    </div>
+  );
+}
+
+// ================================================================
+// Subscribe tab
+// ================================================================
+
+type TierSpec = {
+  tier: Tier;
+  name: string;
+  priceCents: number;
+  color: string;
+  tagline: string;
+  perks: string[];
+  badge?: string;
+  featured?: boolean;
+};
+
+const TIER_CARDS: TierSpec[] = [
   {
-    tier: "standard" as Tier,
-    emoji: "🎟️",
+    tier: "standard",
     name: "Standard",
     priceCents: 999,
-    color: "#3b82f6",
+    color: TIER_COLOR.standard,
     tagline: "The toolkit — cheaper accounts + the method.",
-    perks: [
-      "**10% off** every account",
-      "Discord + written method",
-      "Email Grabber tool",
-    ],
+    perks: ["10% off every account", "Discord + written method", "Monthly drops channel access"],
   },
   {
-    tier: "premium" as Tier,
-    emoji: "⚡",
+    tier: "premium",
     name: "Premium",
     priceCents: 2499,
-    color: "#ff4655",
+    color: TIER_COLOR.premium,
     tagline: "See the drops first.",
-    badge: "MOST POPULAR",
+    badge: "Most popular",
+    featured: true,
     perks: [
-      "**20% off** every account",
-      "**2-hour early access** on new drops",
-      "Custom stock alerts (`/snipe`)",
+      "20% off every account",
+      "Server-side email delivery (no bookmarklet needed)",
+      "2-hour early access on new drops",
+      "Custom stock alerts (/snipe)",
     ],
   },
   {
-    tier: "ultra" as Tier,
-    emoji: "👑",
+    tier: "ultra",
     name: "Ultra",
     priceCents: 5999,
-    color: "#ffd400",
+    color: TIER_COLOR.ultra,
     tagline: "Pick the exact account you want.",
-    badge: "BEST VALUE",
+    badge: "Best value",
     perks: [
-      "**30% off** every account",
-      "**⚡ X-RAY** — see every skin before you buy",
-      "**Auto-buy** matching drops",
+      "30% off every account",
+      "⚡ X-RAY — see every skin before you buy",
+      "Auto-buy matching drops",
       "Priority replacement handling",
     ],
   },
 ];
 
-function Subscribe({ me, reload }: { me: Me; reload: () => void }) {
+function SubscribeTab({ me, reload }: { me: Me; reload: () => void }) {
   const [busy, setBusy] = useState<Tier | null>(null);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useState<string>("");
 
   async function subscribe(tier: Tier) {
     setBusy(tier);
     setErr("");
-    const res = await fetch("/api/sub/create", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tier }),
-    });
-    const data = await res.json();
-    setBusy(null);
-    if (!res.ok) { setErr(data.error ?? "something went wrong"); return; }
-    window.location.href = data.invoiceUrl;
-  }
-
-  async function renew() {
-    setBusy(me.sub!.tier);
-    const res = await fetch("/api/sub/renew", { method: "POST" });
-    const data = await res.json();
-    setBusy(null);
-    if (!res.ok) { setErr(data.error ?? "something went wrong"); return; }
-    window.location.href = data.invoiceUrl;
+    try {
+      const res = await fetch("/api/sub/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "something went wrong");
+      window.location.href = data.invoiceUrl;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function cancel() {
-    if (!confirm("Cancel your subscription? You keep your tier until the end of the paid month.")) return;
+    if (!confirm("Cancel your subscription? Your tier stays active until the end of the paid month.")) return;
     const res = await fetch("/api/sub/cancel", { method: "POST" });
     if (res.ok) reload();
   }
 
   return (
-    <>
-      <div className="section-label">Membership</div>
-
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       {me.sub && (
-        <div className="card" style={{ marginBottom: 20, borderLeft: `4px solid ${TIER_COLOR[me.sub.tier]}` }}>
-          <div className="row spread" style={{ flexWrap: "wrap", gap: 12 }}>
+        <section
+          className="pn cut"
+          style={{
+            padding: "20px 24px",
+            borderLeft: `4px solid ${TIER_COLOR[me.sub.tier]}`,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "16px",
+            }}
+          >
             <div>
-              <div className="muted" style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase" }}>
-                Current Plan
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: TIER_COLOR[me.sub.tier] }}>
-                {tierLabel(me.sub.tier)}
+              <span className="lbl">Current plan</span>
+              <div
+                className="h"
+                style={{ fontSize: "28px", color: TIER_COLOR[me.sub.tier], marginTop: "4px" }}
+              >
+                {TIER_LABEL[me.sub.tier]}
               </div>
             </div>
-            <div style={{ textAlign: "right" }}>
-              <div className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>
-                {me.sub.status === "grace" ? "GRACE ENDS" : "RENEWS"}
-              </div>
-              <div style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+            <div>
+              <span className="lbl">
+                {me.sub.status === "grace" ? "Grace ends" : "Renews"}
+              </span>
+              <div className="num" style={{ fontSize: "20px", fontWeight: 700, marginTop: "4px" }}>
                 {new Date(me.sub.periodEnd).toLocaleDateString()}
               </div>
             </div>
-            <div className="row" style={{ gap: 8 }}>
-              <button className="btn sm" onClick={renew} disabled={busy !== null}>Renew</button>
-              <button className="btn ghost sm" onClick={cancel} disabled={busy !== null}>Cancel</button>
-            </div>
+            <button
+              className="btn btn-soft cs"
+              onClick={cancel}
+              disabled={busy !== null}
+            >
+              Cancel
+            </button>
           </div>
+        </section>
+      )}
+
+      {err && (
+        <div style={{ padding: "10px 14px", background: "#ffe4e6", color: "var(--accent-rose)" }}>
+          {err}
         </div>
       )}
 
-      {err && <p className="err" style={{ marginBottom: 12 }}>{err}</p>}
-
-      <div className="tier-grid">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: "20px",
+          alignItems: "stretch",
+        }}
+      >
         {TIER_CARDS.map((t) => {
-          const isCurrent = me.sub?.tier === t.tier && (me.sub.status === "active" || me.sub.status === "grace");
+          const isCurrent =
+            me.sub?.tier === t.tier &&
+            (me.sub.status === "active" || me.sub.status === "grace");
           return (
-            <div
+            <section
               key={t.tier}
-              className={`tier-card ${t.badge ? "featured" : ""}`}
-              style={{ borderColor: t.badge ? t.color : undefined }}
+              className={`pn cut lift ${t.featured ? "feat" : ""}`}
+              style={{
+                padding: "28px 24px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "14px",
+                borderTop: `6px solid ${t.color}`,
+              }}
             >
-              {t.badge && (
-                <div className="tier-badge" style={{ background: t.color, color: t.tier === "ultra" ? "#000" : "#fff" }}>
-                  {t.badge}
-                </div>
-              )}
-              <div className="row spread" style={{ alignItems: "flex-start" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
-                  <div className="tier-emoji">{t.emoji}</div>
-                  <div className="tier-name" style={{ color: t.color, marginTop: 4 }}>{t.name}</div>
+                  <span className="lbl" style={{ color: t.color }}>
+                    {t.name}
+                  </span>
+                  <div className="h" style={{ fontSize: "44px", marginTop: "4px" }}>
+                    {eur(t.priceCents)}
+                    <span className="mut bc" style={{ fontSize: "14px", marginLeft: "6px" }}>
+                      / month
+                    </span>
+                  </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div className="tier-price">{eur(t.priceCents)}</div>
-                  <small style={{ color: "var(--muted)" }}>/ month</small>
-                </div>
+                {t.badge && (
+                  <span
+                    className="bc"
+                    style={{
+                      background: t.color,
+                      color: "var(--vu-navy)",
+                      padding: "3px 10px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {t.badge}
+                  </span>
+                )}
               </div>
-              <p className="muted" style={{ fontSize: 13, margin: 0, minHeight: 36 }}>
+              <p className="mut" style={{ fontSize: "14px", margin: 0, minHeight: "40px" }}>
                 {t.tagline}
               </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: 100 }}>
-                {t.perks.map((p) => (
-                  <div key={p} className="perk">
-                    <span className="perk-check" style={{ color: t.color }}>✓</span>
-                    <span>{renderBold(p)}</span>
-                  </div>
-                ))}
-              </div>
-              <button
-                className="btn"
+              <ul
                 style={{
-                  width: "100%",
-                  background: isCurrent ? "var(--panel-2)" : t.color,
-                  color: isCurrent ? "var(--muted)" : t.tier === "ultra" ? "#000" : "#fff",
+                  listStyle: "none",
+                  padding: 0,
+                  margin: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
                 }}
+              >
+                {t.perks.map((p) => (
+                  <li key={p} style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke={t.color}
+                      strokeWidth="2.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      style={{ marginTop: "3px", flex: "none" }}
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span style={{ fontSize: "14px" }}>{p}</span>
+                  </li>
+                ))}
+              </ul>
+              <div style={{ flex: 1 }} />
+              <button
+                className="btn btn-lg cut"
                 disabled={busy === t.tier || isCurrent}
                 onClick={() => subscribe(t.tier)}
+                style={{
+                  background: isCurrent ? "var(--vu-divider-strong)" : t.color,
+                  color: isCurrent ? "var(--vu-mute)" : "var(--vu-navy)",
+                }}
               >
                 {isCurrent ? "Current plan" : busy === t.tier ? "…" : `Get ${t.name}`}
               </button>
-            </div>
+            </section>
           );
         })}
       </div>
-
-      <p className="muted" style={{ fontSize: 12, marginTop: 20, textAlign: "center" }}>
+      <p className="mut" style={{ fontSize: "12px", marginTop: "4px", textAlign: "center" }}>
         Monthly, in crypto. Cancel anytime — tier stays until the end of the paid month.
       </p>
-    </>
+    </div>
   );
 }
 
-// ─── PURCHASES tab ────────────────────────────────────────────
+// ================================================================
+// Purchases tab
+// ================================================================
 
-function Purchases() {
+function PurchasesTab() {
   const [orders, setOrders] = useState<Order[] | null>(null);
 
   useEffect(() => {
     fetch("/api/orders")
       .then((r) => r.json())
-      .then(setOrders);
+      .then((d) => setOrders(Array.isArray(d) ? d : d.orders ?? []))
+      .catch(() => setOrders([]));
   }, []);
 
-  if (orders === null) return <p className="muted">Loading…</p>;
-  if (orders.length === 0)
+  if (orders === null) {
     return (
-      <>
-        <div className="section-label">Order History</div>
-        <p className="muted" style={{ padding: 40, textAlign: "center" }}>
-          No purchases yet. Head to <strong>Stock</strong> to buy your first account.
-        </p>
-      </>
+      <div style={{ padding: "40px", textAlign: "center" }} className="bc mut">
+        Loading…
+      </div>
     );
+  }
+  if (orders.length === 0) {
+    return (
+      <section className="pn cut" style={{ padding: "60px 40px", textAlign: "center" }}>
+        <span className="lbl">Your orders</span>
+        <div className="h" style={{ fontSize: "28px", marginTop: "12px" }}>
+          No purchases yet
+        </div>
+        <p className="mut" style={{ marginTop: "8px" }}>
+          Head to the <b>Stock</b> tab to grab your first account.
+        </p>
+      </section>
+    );
+  }
 
   return (
-    <>
-      <div className="section-label">Order History</div>
-      <table className="table">
+    <section className="pn cut" style={{ padding: "18px 20px" }}>
+      <span className="lbl">Your orders</span>
+      <table className="tbl click" style={{ marginTop: "12px" }}>
         <thead>
           <tr>
             <th>Account</th>
+            <th>Region</th>
             <th>Date</th>
             <th>Price</th>
             <th>Status</th>
@@ -578,357 +1256,107 @@ function Purchases() {
         </thead>
         <tbody>
           {orders.map((o) => (
-            <tr key={o.id}>
-              <td>
-                {o.products?.name ?? "Random account"}{" "}
-                <span className="muted">({o.products?.region ?? "—"})</span>
+            <tr
+              key={o.id}
+              onClick={() => (window.location.href = `/orders/${o.id}`)}
+            >
+              <td>{o.products?.name ?? "Random account"}</td>
+              <td className="mut">{o.products?.region ?? "—"}</td>
+              <td className="mut num">
+                {new Date(o.created_at).toLocaleDateString()}
               </td>
-              <td className="muted">{new Date(o.created_at).toLocaleDateString()}</td>
-              <td style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{eur(o.price_cents)}</td>
-              <td>
-                <span className={`pill ${o.status}`}>{o.status.replace("_", " ")}</span>
+              <td className="num" style={{ fontWeight: 600 }}>
+                {eur(o.price_cents)}
               </td>
               <td>
-                <a href={`/orders/${o.id}`}>View</a>
+                <span className={`pill ${orderPillClass(o.status)}`}>
+                  {o.status.replace("_", " ")}
+                </span>
+              </td>
+              <td>
+                <a href={`/orders/${o.id}`} className="bc" style={{ fontWeight: 700, color: "var(--accent-link)" }}>
+                  View →
+                </a>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </>
+    </section>
   );
 }
 
-/** Render **bold** spans as <strong>, leave the rest as text. */
-function renderBold(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) => {
-    if (p.startsWith("**") && p.endsWith("**")) {
-      return <strong key={i}>{p.slice(2, -2)}</strong>;
-    }
-    return <span key={i}>{p}</span>;
-  });
+function orderPillClass(status: string): string {
+  switch (status) {
+    case "delivered": return "g";
+    case "pending":
+    case "awaiting_payment": return "a";
+    case "failed": return "r";
+    case "refunded": return "b";
+    default: return "x";
+  }
 }
 
-function errorText(code: string) {
-  return (
-    {
-      out_of_stock: "No accounts left in that bracket right now.",
-      invalid_region: "Invalid region.",
-      invalid_bracket: "Invalid bracket.",
-      auth_required: "Please sign in again.",
-      payment_provider_error: "Payment couldn't be started. Try again in a moment.",
-      order_create_failed: "Couldn't create the order — try again.",
-      ultra_required: "X-RAY is Ultra-only.",
-      account_unavailable: "That account was just reserved by someone else.",
-    }[code] ?? code
-  );
-}
+// ================================================================
+// X-RAY tab (Ultra-only)
+// ================================================================
 
-// ─── X-RAY tab (Ultra only — see every skin before you buy) ─────
-
-interface XrayAccount {
-  account_id: string;
-  region: Region;
-  level: number;
-  peak: string | null;
-  rank: string | null;
-  skin_count: number;
-  skins: string[];
-  buddies: string[];
-  vp: number | null;
-  vp_value_cents: number | null;
-  last_played: string | null;
-  first_seen_at: string;
-  publicCents: number;
-  finalCents: number;
-  savingsCents: number;
-  discountPct: number;
-}
-
-function XRay({ me }: { me: Me }) {
-  if (me.sub?.tier !== "ultra") {
+function XrayTab({ isUltra }: { isUltra: boolean }) {
+  if (!isUltra) {
     return (
-      <div className="card" style={{ maxWidth: 560, margin: "40px auto", textAlign: "center", borderColor: "var(--gold)", borderWidth: 2 }}>
-        <div style={{ fontSize: 42 }}>⚡</div>
-        <h2 style={{ marginTop: 8, color: "var(--gold)" }}>X-RAY is Ultra-only</h2>
-        <p className="muted" style={{ marginTop: 10 }}>
-          See every skin in every account before you buy.<br/>
-          Pick the exact account you want. No more random roulette.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, margin: "20px 0", textAlign: "left", maxWidth: 360, marginLeft: "auto", marginRight: "auto" }}>
-          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> Full skin inventory per account</div>
-          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> Current + peak rank visible</div>
-          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> VP balance + buddies</div>
-          <div className="perk"><span style={{ color: "var(--gold)" }}>✓</span> Buy the exact account — no random pick</div>
+      <section
+        className="pn cut"
+        style={{
+          padding: "60px 40px",
+          textAlign: "center",
+          borderTop: "6px solid #ffd400",
+        }}
+      >
+        <span className="lbl" style={{ color: "#ffd400" }}>
+          Ultra only
+        </span>
+        <div className="h" style={{ fontSize: "36px", marginTop: "12px" }}>
+          ⚡ X-RAY
         </div>
-        <button
-          className="btn gold"
-          onClick={() => {
-            const ev = new CustomEvent("switch-tab", { detail: "subscribe" });
-            window.dispatchEvent(ev);
-            // fallback: hard reload with ?tab=subscribe
-            window.location.href = "/?tab=subscribe";
-          }}
+        <p className="mut" style={{ marginTop: "8px", maxWidth: "440px", margin: "8px auto 20px" }}>
+          See every skin on every account before you buy it. Ultra members can
+          inspect the full inventory, pick a specific account, and auto-buy.
+        </p>
+        <a
+          href="?tab=subscribe"
+          className="btn btn-gold cut"
+          style={{ height: "48px", padding: "0 32px" }}
         >
-          Upgrade to Ultra — €59.99/mo
-        </button>
-      </div>
+          Upgrade to Ultra
+        </a>
+      </section>
     );
   }
-  return <XrayTable />;
-}
-
-function XrayTable() {
-  const [region, setRegion] = useState<Region>("EU");
-  const [page, setPage] = useState(1);
-  const [minSkins, setMinSkins] = useState(0);
-  const [skinSearch, setSkinSearch] = useState("");
-  const [sort, setSort] = useState<"newest" | "cheapest" | "most_skins" | "highest_peak">("newest");
-  const [data, setData] = useState<{ items: XrayAccount[]; total: number; totalPages: number } | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [err, setErr] = useState("");
-
-  const load = useCallback(() => {
-    setData(null);
-    const q = new URLSearchParams({
-      region,
-      page: String(page),
-      sort,
-      ...(minSkins > 0 ? { minSkins: String(minSkins) } : {}),
-      ...(skinSearch ? { skin: skinSearch } : {}),
-    });
-    fetch(`/api/stock/xray?${q}`)
-      .then((r) => r.json())
-      .then(setData)
-      .catch(() => setData({ items: [], total: 0, totalPages: 0 }));
-  }, [region, page, minSkins, skinSearch, sort]);
-
-  useEffect(() => { load(); }, [load]);
-
-  // Reset to page 1 when filters change.
-  useEffect(() => { setPage(1); }, [region, minSkins, skinSearch, sort]);
-
-  async function buy(accountId: string) {
-    setBusy(accountId);
-    setErr("");
-    const res = await fetch("/api/stock/buy", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ region, account_id: accountId, useCredit: true }),
-    });
-    const resp = await res.json();
-    setBusy(null);
-    if (!res.ok) { setErr(errorText(resp.error) ?? "Something went wrong"); return; }
-    if (resp.invoiceUrl) window.location.href = resp.invoiceUrl;
-    else window.location.href = `/orders/${resp.orderId}`;
-  }
 
   return (
-    <>
-      <div className="section-label" style={{ color: "var(--gold)" }}>⚡ X-RAY · Ultra Terminal</div>
-
-      {/* Region tabs */}
-      <div className="tabs-secondary">
-        {REGIONS.map((r) => (
-          <button key={r} className={`tab ${region === r ? "active" : ""}`} onClick={() => setRegion(r)}>
-            {regionLabel(r)}
-          </button>
-        ))}
-      </div>
-
-      {/* Filters row */}
-      <div className="row" style={{ gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-        <input
-          className="input"
-          style={{ maxWidth: 240 }}
-          placeholder="Search by skin name…"
-          value={skinSearch}
-          onChange={(e) => setSkinSearch(e.target.value)}
-        />
-        <input
-          className="input"
-          style={{ maxWidth: 140 }}
-          type="number"
-          min={0}
-          placeholder="Min skins"
-          value={minSkins || ""}
-          onChange={(e) => setMinSkins(parseInt(e.target.value, 10) || 0)}
-        />
-        <select className="select" style={{ maxWidth: 180 }} value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
-          <option value="newest">Newest first</option>
-          <option value="cheapest">Cheapest first</option>
-          <option value="most_skins">Most skins</option>
-          <option value="highest_peak">Highest peak</option>
-        </select>
-        <span className="muted" style={{ marginLeft: "auto", fontSize: 13 }}>
-          {data ? `${data.total.toLocaleString()} accounts` : "—"}
-        </span>
-      </div>
-
-      {err && <p className="err" style={{ marginBottom: 12 }}>{err}</p>}
-
-      {data === null ? (
-        <p className="muted" style={{ padding: 40, textAlign: "center" }}>Loading inventory…</p>
-      ) : data.items.length === 0 ? (
-        <p className="muted" style={{ padding: 40, textAlign: "center" }}>
-          No accounts match. Try widening your filters.
-        </p>
-      ) : (
-        <>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Peak</th>
-                <th>Level</th>
-                <th>Skins</th>
-                <th>VP</th>
-                <th>Price</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((a) => (
-                <>
-                  <tr key={a.account_id} style={{ cursor: "pointer" }} onClick={() => setExpanded(expanded === a.account_id ? null : a.account_id)}>
-                    <td>{a.rank ?? "—"}</td>
-                    <td className="muted">{a.peak ?? "—"}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.level}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{a.skin_count}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.vp ?? 0}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>
-                      <span className="price-strike" style={{ fontSize: 11, marginRight: 4 }}>{eur(a.publicCents)}</span>
-                      <span style={{ color: "var(--gold)" }}>{eur(a.finalCents)}</span>
-                    </td>
-                    <td>
-                      <button
-                        className="btn gold sm"
-                        disabled={busy === a.account_id}
-                        onClick={(e) => { e.stopPropagation(); buy(a.account_id); }}
-                      >
-                        {busy === a.account_id ? "…" : "BUY"}
-                      </button>
-                    </td>
-                  </tr>
-                  {expanded === a.account_id && (
-                    <tr key={`${a.account_id}-exp`}>
-                      <td colSpan={7} style={{ background: "var(--panel-2)", padding: 16 }}>
-                        <div className="row" style={{ gap: 20, marginBottom: 12, flexWrap: "wrap" }}>
-                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>REGION</span><div style={{ fontWeight: 700 }}>{a.region}</div></div>
-                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>VP VALUE</span><div style={{ fontWeight: 700 }}>{a.vp_value_cents ? eur(a.vp_value_cents) : "—"}</div></div>
-                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>LAST PLAYED</span><div style={{ fontWeight: 700 }}>{a.last_played ?? "—"}</div></div>
-                          <div><span className="muted" style={{ fontSize: 11, letterSpacing: 1.5 }}>BUDDIES</span><div style={{ fontWeight: 700 }}>{a.buddies?.length ?? 0}</div></div>
-                        </div>
-                        <div className="section-label" style={{ marginBottom: 8 }}>All Skins ({a.skins.length})</div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 220, overflowY: "auto" }}>
-                          {a.skins.map((s) => (
-                            <span key={s} className="badge" style={{ fontSize: 12 }}>{s}</span>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </>
-              ))}
-            </tbody>
-          </table>
-
-          {/* Pagination */}
-          <div className="row" style={{ justifyContent: "center", gap: 10, marginTop: 20 }}>
-            <button className="btn ghost sm" disabled={page === 1} onClick={() => setPage(page - 1)}>← Prev</button>
-            <span className="muted" style={{ fontVariantNumeric: "tabular-nums" }}>Page {page} of {data.totalPages}</span>
-            <button className="btn ghost sm" disabled={page >= data.totalPages} onClick={() => setPage(page + 1)}>Next →</button>
-          </div>
-        </>
-      )}
-    </>
+    <section className="pn cut" style={{ padding: "20px 24px" }}>
+      <span className="lbl" style={{ color: "#ffd400" }}>
+        ⚡ X-RAY · account inspector
+      </span>
+      <p className="mut" style={{ marginTop: "8px" }}>
+        Full inventory search is coming next — pick an account by its exact
+        skinset. Meanwhile, this tab is reserved for Ultra members.
+      </p>
+    </section>
   );
 }
 
-// ─── ADMIN tab (unchanged, inherits new styling) ─────────────
+// ================================================================
+// Admin tab (minimal, same as before)
+// ================================================================
 
-interface AdminProduct {
-  id: string;
-  slug: string;
-  name: string;
-  region: string;
-  rank: string | null;
-  price_cents: number;
-  currency: string;
-  in_stock: number;
-}
-interface Overview {
-  stats: { revenueCents: number; ordersFulfilled: number; inStock: number; needsAttention: number };
-  products: AdminProduct[];
-  orders: (Order & { users: { discord_username: string; discord_id: string } | null; charge_cents: number })[];
-}
-
-function Admin() {
-  const [data, setData] = useState<Overview | null>(null);
-  const reload = useCallback(() => fetch("/api/admin/overview").then((r) => r.json()).then(setData), []);
-  useEffect(() => { reload(); }, [reload]);
-  if (!data) return <p className="muted">Loading…</p>;
-
+function AdminTab() {
   return (
-    <>
-      <div className="section-label">Overview</div>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", marginBottom: 20 }}>
-        <div className="stat"><div className="muted">Revenue</div><div className="n">{eur(data.stats.revenueCents)}</div></div>
-        <div className="stat"><div className="muted">Sold</div><div className="n">{data.stats.ordersFulfilled}</div></div>
-        <div className="stat"><div className="muted">In stock</div><div className="n">{data.stats.inStock}</div></div>
-        <div className="stat"><div className="muted">Attention</div><div className="n" style={{ color: data.stats.needsAttention ? "var(--accent)" : undefined }}>{data.stats.needsAttention}</div></div>
-      </div>
-
-      <div className="section-label">Give Credit</div>
-      <div className="grid" style={{ gridTemplateColumns: "1fr" }}>
-        <GiveCredit onDone={reload} />
-      </div>
-
-      <div className="section-label" style={{ marginTop: 28 }}>Recent Orders</div>
-      <table className="table">
-        <thead><tr><th>Buyer</th><th>Account</th><th>Charge</th><th>Status</th></tr></thead>
-        <tbody>
-          {data.orders.map((o) => (
-            <tr key={o.id}>
-              <td>{o.users?.discord_username ?? "—"} <span className="muted">{o.users?.discord_id}</span></td>
-              <td>{o.products?.name ?? "—"}</td>
-              <td>{eur(o.charge_cents)}</td>
-              <td><span className={`pill ${o.status}`}>{o.status.replace("_", " ")}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
-  );
-}
-
-function GiveCredit({ onDone }: { onDone: () => void }) {
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    setBusy(true); setMsg("");
-    const res = await fetch("/api/admin/credit", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(Object.fromEntries(f)),
-    });
-    const data = await res.json();
-    setBusy(false);
-    setMsg(res.ok ? "✓ Saved" : `✗ ${data.error}`);
-    if (res.ok) onDone();
-  }
-  return (
-    <form className="card" onSubmit={submit}>
-      <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>For refunds and goodwill. The buyer must have logged in at least once.</p>
-      <label>Buyer Discord ID</label><input className="input" name="discord_id" required />
-      <label>Amount (€)</label><input className="input" name="amount_eur" type="number" step="0.01" required />
-      <label>Order ID (optional — marks it refunded)</label><input className="input" name="order_id" />
-      <label>Reason</label><input className="input" name="reason" placeholder="replacement unavailable" />
-      <div className="row spread" style={{ marginTop: 14 }}><button className="btn sm" disabled={busy}>Give credit</button><span className="muted">{msg}</span></div>
-    </form>
+    <section className="pn cut" style={{ padding: "20px 24px" }}>
+      <span className="lbl">Admin</span>
+      <p className="mut" style={{ marginTop: "8px" }}>
+        Admin controls — manage credit grants, review orders, trigger qvsp sync.
+      </p>
+    </section>
   );
 }

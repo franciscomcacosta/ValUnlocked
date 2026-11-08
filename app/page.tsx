@@ -456,6 +456,8 @@ type Selected =
   | { kind: "bracket"; row: BracketRow }
   | { kind: "skin";    row: FeaturedSkinRow };
 
+const SKINS_PER_PAGE = 12;
+
 function StockTab({ me }: { me: Me }) {
   const [mode, setMode] = useState<StockMode>("bracket");
   const [region, setRegion] = useState<Region>("EU");
@@ -466,6 +468,7 @@ function StockTab({ me }: { me: Me }) {
   const [err, setErr] = useState<string>("");
   const [useCredit, setUseCredit] = useState(true);
   const [query, setQuery] = useState<string>("");
+  const [skinPage, setSkinPage] = useState<number>(0);
 
   const loadBrackets = useCallback(() => {
     fetch("/api/stock/brackets")
@@ -476,7 +479,10 @@ function StockTab({ me }: { me: Me }) {
 
   const loadFeatured = useCallback((r: Region) => {
     setFeatured(null);
-    fetch(`/api/stock/featured-skins?region=${r}`)
+    // all-skins returns every named-tier skin in stock for the region,
+    // sorted Ultra → Select then alphabetically. Heavier than the old
+    // featured list (one query + N art lookups) but complete.
+    fetch(`/api/stock/all-skins?region=${r}`)
       .then((res) => res.json())
       .then((d) => setFeatured(d.skins ?? []))
       .catch(() => setFeatured([]));
@@ -485,8 +491,9 @@ function StockTab({ me }: { me: Me }) {
   useEffect(() => { loadBrackets(); }, [loadBrackets]);
   useEffect(() => { loadFeatured(region); }, [region, loadFeatured]);
 
-  // Clear selection when switching mode/region
-  useEffect(() => { setSel(null); }, [mode, region]);
+  // Clear selection + reset pagination when switching mode/region/query
+  useEffect(() => { setSel(null); setSkinPage(0); }, [mode, region]);
+  useEffect(() => { setSkinPage(0); }, [query]);
 
   const totalsByRegion: Partial<Record<Region, number>> = {};
   for (const row of brackets ?? []) {
@@ -702,28 +709,68 @@ function StockTab({ me }: { me: Me }) {
           {mode === "skin" && (
             <>
               {featured === null ? (
-                <SkeletonGrid rows={2} cols={4} />
+                <SkeletonGrid rows={3} cols={4} />
               ) : visibleSkins.length === 0 ? (
                 <EmptyState region={region} forSkins />
               ) : (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                    gridAutoRows: "minmax(160px, 1fr)",
-                    gap: "10px",
-                  }}
-                >
-                  {visibleSkins.map((s) => (
-                    <SkinTile
-                      key={s.key}
-                      row={s}
-                      region={region}
-                      selected={sel?.kind === "skin" && sel.row.label === s.label}
-                      onPick={() => setSel({ kind: "skin", row: s })}
-                    />
-                  ))}
-                </div>
+                (() => {
+                  const totalPages = Math.max(1, Math.ceil(visibleSkins.length / SKINS_PER_PAGE));
+                  const page = Math.min(skinPage, totalPages - 1);
+                  const start = page * SKINS_PER_PAGE;
+                  const slice = visibleSkins.slice(start, start + SKINS_PER_PAGE);
+                  return (
+                    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "10px" }}>
+                      <div
+                        style={{
+                          flex: 1,
+                          minHeight: 0,
+                          display: "grid",
+                          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                          gridTemplateRows: "repeat(3, minmax(0, 1fr))",
+                          gap: "10px",
+                        }}
+                      >
+                        {slice.map((s) => (
+                          <SkinTile
+                            key={s.key}
+                            row={s}
+                            region={region}
+                            selected={sel?.kind === "skin" && sel.row.label === s.label}
+                            onPick={() => setSel({ kind: "skin", row: s })}
+                          />
+                        ))}
+                      </div>
+                      <div
+                        style={{
+                          flex: "none",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <button
+                          className="btn btn-soft cs"
+                          style={{ height: "34px", fontSize: "15px" }}
+                          onClick={() => setSkinPage((p) => Math.max(0, p - 1))}
+                          disabled={page === 0}
+                        >
+                          ← Prev
+                        </button>
+                        <span className="bc num" style={{ fontWeight: 600, fontSize: "15px" }}>
+                          Page {page + 1} of {totalPages} · {visibleSkins.length} skins
+                        </span>
+                        <button
+                          className="btn btn-soft cs"
+                          style={{ height: "34px", fontSize: "15px" }}
+                          onClick={() => setSkinPage((p) => Math.min(totalPages - 1, p + 1))}
+                          disabled={page >= totalPages - 1}
+                        >
+                          Next →
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()
               )}
             </>
           )}

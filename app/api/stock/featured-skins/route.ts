@@ -44,21 +44,24 @@ export async function GET(req: Request) {
         .eq("claimed", false)
         .lte("public_at", new Date().toISOString());
       // Enrich with art from valorant-api.com (cached 24h in-process).
-      // We look up by the label + weapon as "Reaver Vandal", which matches
-      // the community API's displayName exactly for named skins.
-      const art = await lookupSkinArt(`${skin.label} ${skin.weapon}`);
+      // skin.label already includes the weapon name ("Reaver Vandal"), so
+      // we look up by label alone — not label+weapon which would duplicate.
+      const art = await lookupSkinArt(skin.label);
 
       if (error || !data || data.length === 0) {
+        // Sold-out: still compute a display price from the per-skin floor so
+        // "from €X" shows what you'd pay once stock returns, not €0.00.
+        const indicative = featuredPriceForUser(skin.minPriceCents, skin.minPriceCents, tier);
         return {
           key: skin.label,
           label: skin.label,
           weapon: skin.weapon,
           available: 0,
           cheapestQvspCents: null,
-          publicCents: 0,
-          finalCents: 0,
-          savingsCents: 0,
-          discountPct: 0,
+          publicCents: indicative.publicCents,
+          finalCents: indicative.finalCents,
+          savingsCents: indicative.savingsCents,
+          discountPct: indicative.discountPct,
           icon: art.icon,
           tier: art.tierName,
           tierColor: art.tierColor,

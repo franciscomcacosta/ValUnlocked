@@ -535,7 +535,7 @@ function StockTab({ me }: { me: Me }) {
       return {
         kind: "bracket" as const,
         range: sel.row.label,
-        tc: "var(--vu-red)",
+        tc: bracketTierColor(sel.row.label),
         name: `${sel.row.label} skins`,
         oldCents: sel.row.price.publicCents,
         finalCents: sel.row.price.finalCents,
@@ -934,6 +934,23 @@ function StockTab({ me }: { me: Me }) {
   );
 }
 
+// Bracket → tier color mapping. Lower brackets are the standard red,
+// mid brackets lean pink (premium), higher lean orange/gold (exclusive/ultra).
+// Mirrors the content-tier colors used across the site so pricing feels
+// intuitively tiered by value.
+const BRACKET_COLOR: Record<string, string> = {
+  "1-25":    "var(--vu-red)",        // #ff4655
+  "26-50":   "var(--vu-red)",        // #ff4655
+  "51-100":  "var(--tier-premium)",  // #d1548d pink
+  "101-150": "var(--tier-exclusive)",// #f5955b orange
+  "151-200": "var(--tier-ultra)",    // #fad663 gold
+  "200+":    "var(--tier-ultra)",    // #fad663 gold
+};
+
+function bracketTierColor(label: string): string {
+  return BRACKET_COLOR[label] ?? "var(--vu-red)";
+}
+
 function BracketTile({
   row, region, selected, onPick,
 }: {
@@ -944,12 +961,13 @@ function BracketTile({
 }) {
   const soldOut = row.available === 0;
   const hasDiscount = row.price.discountPct > 0;
+  const tc = bracketTierColor(row.label);
   return (
     <button
       disabled={soldOut}
       onClick={onPick}
       className={`tile cs ${selected ? "on" : ""}`}
-      style={{ ["--tc" as string]: "var(--vu-red)" }}
+      style={{ ["--tc" as string]: tc }}
       aria-label={`${row.label} skins`}
     >
       <span className="glow" />
@@ -980,7 +998,7 @@ function BracketTile({
         <span className="h num" style={{ fontSize: "52px", color: "#fff" }}>
           {row.label}
         </span>
-        <span className="bc" style={{ fontSize: "15px", fontWeight: 600, color: "var(--vu-red)" }}>
+        <span className="bc" style={{ fontSize: "15px", fontWeight: 600, color: tc }}>
           Skins
         </span>
       </span>
@@ -1152,12 +1170,20 @@ function SkinTile({
           </span>
         </span>
         <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-          <span className="bc" style={{ fontSize: "11px", color: "var(--vu-ivory-dim)", lineHeight: 1.1 }}>
-            from
-          </span>
-          <span className="bc num" style={{ fontWeight: 700, fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
-            €{eur(row.finalCents)}
-          </span>
+          {soldOut ? (
+            <span className="bc" style={{ fontSize: "12px", color: "#f87171", fontWeight: 700, lineHeight: 1.1 }}>
+              Sold out
+            </span>
+          ) : (
+            <>
+              <span className="bc" style={{ fontSize: "11px", color: "var(--vu-ivory-dim)", lineHeight: 1.1 }}>
+                from
+              </span>
+              <span className="bc num" style={{ fontWeight: 700, fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
+                €{eur(row.finalCents)}
+              </span>
+            </>
+          )}
         </span>
       </span>
     </button>

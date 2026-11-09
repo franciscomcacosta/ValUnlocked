@@ -1227,19 +1227,19 @@ function BracketTile({
       }}
       aria-label={`${row.label} skins`}
     >
-      <span className="glow" style={{ opacity: Math.max(0.35, vis.intensity * 0.85) }} />
+      <span className="glow" style={{ opacity: Math.max(0.4, vis.intensity * 0.95) }} />
+      {/* Corner tier ribbon — mirrors the designer's "FRENZY" tag. */}
+      <span className="tier-ribbon">{vis.label}</span>
       <span
         style={{
           position: "relative",
           display: "flex",
-          justifyContent: "space-between",
+          justifyContent: "flex-end",
           alignItems: "center",
           padding: "10px 12px 0",
+          minHeight: "32px",
         }}
       >
-        <span className="bc" style={{ fontSize: "13px", fontWeight: 600, color: "var(--vu-ivory-dim)" }}>
-          Random account
-        </span>
         <span className="rg">{region}</span>
       </span>
       <span
@@ -1250,23 +1250,32 @@ function BracketTile({
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          gap: "2px",
+          gap: "4px",
+          padding: "8px 8px 12px",
         }}
       >
-        <span className="h num" style={{ fontSize: "52px", color: "#fff", lineHeight: 1 }}>
+        <span
+          className="h num"
+          style={{
+            fontSize: "56px",
+            color: "#fff",
+            lineHeight: 1,
+            textShadow: `0 2px 24px ${tc}55, 0 0 1px ${tc}`,
+          }}
+        >
           {row.label}
         </span>
         <span
           className="bc"
           style={{
-            fontSize: "13px",
-            fontWeight: 700,
-            color: tc,
-            letterSpacing: "0.1em",
-            textShadow: `0 0 12px ${tc}aa`,
+            fontSize: "11px",
+            fontWeight: 800,
+            color: "var(--vu-ivory-dim)",
+            letterSpacing: "0.22em",
+            textTransform: "uppercase",
           }}
         >
-          {vis.label} · Skins
+          Random account
         </span>
         {row.label === "1-25" && (
           <span
@@ -1276,7 +1285,7 @@ function BracketTile({
               fontWeight: 700,
               color: "var(--accent-success)",
               letterSpacing: "0.12em",
-              marginTop: "4px",
+              marginTop: "2px",
             }}
           >
             ★ Always includes a shop skin
@@ -1288,8 +1297,8 @@ function BracketTile({
           position: "relative",
           display: "flex",
           justifyContent: "center",
-          gap: "14px",
-          padding: "0 0 8px",
+          gap: "16px",
+          padding: "0 0 10px",
           fontSize: "12px",
           color: "var(--vu-ivory-dim)",
         }}
@@ -1306,8 +1315,11 @@ function BracketTile({
         <span>Delivery <b style={{ color: "#86efac" }}>Instant</b></span>
       </span>
       <span className="strip">
+        <span className="bc" style={{ fontSize: "10px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.18em" }}>
+          FROM
+        </span>
         <span className="num" style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-          <span className="bc" style={{ fontWeight: 700, fontSize: "22px", color: "#fff" }}>
+          <span className="bc" style={{ fontWeight: 800, fontSize: "22px", color: "#fff" }}>
             €{eur(row.price.finalCents)}
           </span>
           {hasDiscount && (
@@ -1315,10 +1327,10 @@ function BracketTile({
               €{eur(row.price.publicCents)}
             </span>
           )}
+          {hasDiscount && !soldOut && (
+            <span className="stk ok" style={{ marginLeft: "6px" }}>−{Math.round(row.price.discountPct * 100)}%</span>
+          )}
         </span>
-        {hasDiscount && !soldOut && (
-          <span className="stk ok">−{Math.round(row.price.discountPct * 100)}%</span>
-        )}
       </span>
     </button>
   );

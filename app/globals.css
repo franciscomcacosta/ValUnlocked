@@ -287,8 +287,33 @@ input, select, textarea {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 4px 8px;
-  background: rgba(15, 25, 35, 0.72);
+  padding: 10px 16px;
+  /* Solid near-black bar that bleeds to the clipped edges — matches
+     the designer's ELDERFLAME strip. No transparency so the gradient
+     above doesn't bleed through and narrow the stripe visually. */
+  background: #0b1420;
+  border-top: 1px solid color-mix(in srgb, var(--tc, #ef4444) 30%, transparent);
+  /* Negative horizontal margin pulls the stripe past the parent's
+     internal padding so it touches the tile's clip-path edges. */
+  margin: 0 -1px -1px;
+}
+/* Tier ribbon tag in the top-left, mirrors the designer's "FRENZY" chip.
+   Uses the tier accent color for the fill so each tier feels distinct. */
+.tier-ribbon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 6px 14px 6px 10px;
+  background: color-mix(in srgb, var(--tc, #ef4444) 85%, #0b1420);
+  color: #fff;
+  font-family: var(--f-display, "Inter"), sans-serif;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  z-index: 2;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--tc, #ef4444) 50%, transparent);
 }
 
 /* === Agent avatar === */

@@ -171,7 +171,9 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     await notifyDiscordUser(
       user.discord_id,
       `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n` +
-        `View credentials: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
+        `View credentials: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n\n` +
+        `⏱️ **Test it now — you have 10 minutes.** Log in, and if anything's wrong (wrong password, banned, asks for a code…) ` +
+        `press **"No, there's a problem"** on the order page to get a replacement or your money back.\n` +
         `Change the account and email passwords on first login.`
     ).catch((e) => console.error("[fulfil] DM failed", e));
   }

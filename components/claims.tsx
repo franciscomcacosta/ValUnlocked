@@ -7,12 +7,18 @@ import { useEffect, useRef, useState } from "react";
 
 const eur = (c: number) => (c / 100).toFixed(2);
 
-export const CLAIM_REASON_OPTIONS: Array<[string, string]> = [
-  ["login", "Can't log in"],
-  ["count", "Wrong skin count"],
-  ["locked", "Locked or banned"],
-  ["other", "Something else"],
+// Same six problem types the supplier (qvsp) accepts — keys are their
+// category values, so the report reaches them already sorted.
+export const CLAIM_REASON_OPTIONS: Array<[string, string, string]> = [
+  ["login", "🔑", "Login / password doesn't work"],
+  ["login_mfa", "🔒", "Can't log in: it wants an email / MFA code I can't get"],
+  ["banned", "🚫", "Account is banned / suspended"],
+  ["ingame_ban", "⛔", "In-game ban / restriction (logs in, but can't play Comp)"],
+  ["mfa", "📱", "Logs in fine: Ranked/Comp needs verification (phone / MFA)"],
+  ["other", "✍️", "Other (type your issue)"],
 ];
+const LEGACY_LABELS: Record<string, string> = { count: "Wrong skin count", locked: "Locked or banned" };
+export const claimReasonLabel = (k: string) => CLAIM_REASON_OPTIONS.find((r) => r[0] === k)?.[2] ?? LEGACY_LABELS[k] ?? k;
 
 export type ClaimSummary = {
   id: string;
@@ -94,6 +100,7 @@ export function ReportProblemModal({
 
   async function submit() {
     if (!reason || !file) return;
+    if (reason === "other" && details.trim().length < 4) { setErr("Tell us what's wrong in the box below."); return; }
     setBusy(true); setErr(""); setProgress(0);
     try {
       const u = await fetch("/api/claims", {
@@ -116,6 +123,7 @@ export function ReportProblemModal({
         s.error === "already_reported" ? "You've already reported this order — it's under review."
         : s.error === "window_closed" ? "The 10-minute window has closed."
         : s.error === "claims_unavailable" ? "Reporting isn't switched on yet. Open a ticket in our Discord."
+        : s.error === "details_required" ? "Tell us what's wrong in the box below."
         : "Couldn't send the report. Try again."
       );
       setTicket(s.ticket);
@@ -127,7 +135,7 @@ export function ReportProblemModal({
     }
   }
 
-  const reasonLabel = CLAIM_REASON_OPTIONS.find((r) => r[0] === reason)?.[1] ?? "";
+  const reasonLabel = reason ? claimReasonLabel(reason) : "";
 
   return (
     <div
@@ -178,15 +186,16 @@ export function ReportProblemModal({
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <span className="lbl" style={{ color: "#0f1923" }}>What&apos;s wrong?</span>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "6px" }}>
-                {CLAIM_REASON_OPTIONS.map(([k, label]) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {CLAIM_REASON_OPTIONS.map(([k, icon, label]) => (
                   <button
                     key={k}
                     className="cs"
                     aria-pressed={reason === k}
                     onClick={() => setReason(k)}
-                    style={{ height: "42px", border: 0, cursor: "pointer", textAlign: "left", padding: "0 12px", fontWeight: 600, background: reason === k ? "#0f1923" : "#eef1f5", color: reason === k ? "#fff" : "#0f1923", transition: "background-color 140ms, color 140ms" }}
+                    style={{ minHeight: "40px", border: 0, cursor: "pointer", textAlign: "left", padding: "8px 12px", display: "flex", alignItems: "center", gap: "10px", fontWeight: 600, fontSize: "14px", background: reason === k ? "#0f1923" : "#eef1f5", color: reason === k ? "#fff" : "#0f1923", transition: "background-color 140ms, color 140ms" }}
                   >
+                    <span aria-hidden="true" style={{ width: "20px", textAlign: "center" }}>{icon}</span>
                     {label}
                   </button>
                 ))}
@@ -220,7 +229,7 @@ export function ReportProblemModal({
             </div>
 
             <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <span className="lbl" style={{ color: "#0f1923" }}>Details <span className="mut" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400, fontSize: "12px" }}>(optional)</span></span>
+              <span className="lbl" style={{ color: "#0f1923" }}>Details <span className="mut" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400, fontSize: "12px" }}>{reason === "other" ? "(required — what's wrong?)" : "(optional)"}</span></span>
               <textarea className="inp" value={details} onChange={(e) => setDetails(e.target.value)} maxLength={1000} style={{ height: "52px", padding: "10px 12px", resize: "none" }} placeholder="Error message, time, what you tried…" />
             </label>
 
@@ -361,6 +370,76 @@ export function ClaimOutcomeModal({ onCredited }: { onCredited?: () => void }) {
           )}
           <button className="btn btn-gold cut btn-lg" onClick={close}>{refunds.length ? "Nice — back to the store" : "Got it"}</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Big "Is everything OK with the account?" prompt shown right after
+ *  delivery. Yes → a slim reminder that they can still report until the
+ *  10-minute window ends. No → opens the report form. */
+export function AccountCheckPrompt({
+  orderId, windowEndsAt, onReport,
+}: {
+  orderId: string;
+  windowEndsAt: string | null;
+  onReport: () => void;
+}) {
+  const key = `vu_ok_${orderId}`;
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    try { setAnswer(localStorage.getItem(key)); } catch { /* private mode */ }
+  }, [key]);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const end = windowEndsAt ? new Date(windowEndsAt).getTime() : 0;
+  const left = end - now;
+  if (!windowEndsAt || left <= 0) return null;
+  const clock = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
+  const urgent = left <= 120_000;
+
+  const sayYes = () => {
+    setAnswer("yes");
+    try { localStorage.setItem(key, "yes"); } catch { /* ignore */ }
+  };
+
+  if (answer === "yes") {
+    return (
+      <div className="cs rise" role="status" style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "12px", padding: "10px 16px", background: "#dcfce7", color: "#14532d" }}>
+        <span aria-hidden="true" style={{ fontSize: "18px" }}>✅</span>
+        <span style={{ flex: 1, fontSize: "14px" }}>
+          Glad it works — enjoy! Something wrong after all? You can still report it for <b className="num">{clock}</b>.
+        </span>
+        <button className="btn btn-soft cs btn-sm" style={{ color: "#be123c" }} onClick={onReport}>Report a problem</button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="cs rise"
+      role="region"
+      aria-label="Check your account"
+      style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "18px", flexWrap: "wrap", padding: "16px 20px", background: "#0f1923", color: "#fff", borderLeft: "5px solid #ffd400", boxShadow: "0 0 0 2px rgba(255,212,0,0.25)" }}
+    >
+      <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column", gap: "4px" }}>
+        <span className="h" style={{ fontSize: "28px", lineHeight: 1 }}>Is everything OK with the account?</span>
+        <span style={{ fontSize: "14px", color: "#c9d1d9" }}>
+          Log in now and check. If something&apos;s wrong you get a <b style={{ color: "#fff" }}>replacement or your money back</b> — just tell us within{" "}
+          <b className="num" style={{ color: urgent ? "#ff4655" : "#ffd400", fontSize: "16px" }}>{clock}</b>.
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <button className="btn cs" onClick={sayYes} style={{ height: "48px", padding: "0 20px", background: "#16a34a", color: "#fff", fontSize: "17px" }}>
+          ✅ Yes, it works
+        </button>
+        <button className="btn cs" onClick={onReport} style={{ height: "48px", padding: "0 20px", background: "#ff4655", color: "#fff", fontSize: "17px" }}>
+          ❌ No, there&apos;s a problem
+        </button>
       </div>
     </div>
   );

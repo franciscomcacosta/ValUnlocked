@@ -24,12 +24,18 @@ export const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
 // one before refunding instead.
 const REPLACEMENT_WAIT_MS = 10 * 60 * 1000;
 
+// Same six categories qvsp accepts, so every report reaches them with the
+// right problem type. Keys ARE qvsp's category values.
 export const CLAIM_REASONS: Record<string, string> = {
-  login: "Can't log in",
-  count: "Wrong skin count",
-  locked: "Locked or banned",
-  other: "Something else",
+  banned: "Account is banned / suspended",
+  ingame_ban: "In-game ban / restriction (logs in, but can't play Comp)",
+  login: "Login / password doesn't work",
+  login_mfa: "Can't log in: it wants an email / MFA code I can't get",
+  mfa: "Logs in fine: Ranked/Comp needs verification (phone / MFA)",
+  other: "Other",
 };
+/** Labels for reports filed before the categories matched qvsp's. */
+export const LEGACY_CLAIM_REASONS: Record<string, string> = { count: "Wrong skin count", locked: "Locked or banned" };
 
 export type ClaimRow = {
   id: string;
@@ -94,7 +100,7 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
   const { data: claim } = await db.from("replacement_claims").select("*").eq("id", claimId).single();
   if (!claim || claim.qvsp_ticket_id) return;
   const c = claim as ClaimRow;
-  const reasonLabel = CLAIM_REASONS[c.reason] ?? c.reason;
+  const reasonLabel = CLAIM_REASONS[c.reason] ?? LEGACY_CLAIM_REASONS[c.reason] ?? c.reason;
   const videoUrl = c.video_path
     ? (await db.storage.from(VIDEO_BUCKET).createSignedUrl(c.video_path, 60 * 60 * 24 * 7)).data?.signedUrl ?? null
     : null;

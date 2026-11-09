@@ -110,6 +110,9 @@ export async function POST(req: Request) {
     }
     const reason = String(body?.reason ?? "");
     if (!(reason in CLAIM_REASONS)) return Response.json({ error: "invalid_reason" }, { status: 400 });
+    if (reason === "other" && String(body?.details ?? "").trim().length < 4) {
+      return Response.json({ error: "details_required" }, { status: 400 });
+    }
     const videoPath = String(body?.videoPath ?? "");
     if (!videoPath.startsWith(`${order.id}/`)) return Response.json({ error: "video_required" }, { status: 400 });
     const details = String(body?.details ?? "").trim().slice(0, 1000) || null;

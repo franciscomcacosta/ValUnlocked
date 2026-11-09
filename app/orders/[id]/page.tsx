@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { LockLogo } from "@/components/lock-logo";
-import { ReportProblemModal, ClaimStatusCard, type ClaimSummary } from "@/components/claims";
+import { ReportProblemModal, ClaimStatusCard, AccountCheckPrompt, type ClaimSummary } from "@/components/claims";
 
 // ----- Types the /api/orders/[id] route is expected to return -----
 type Credential = { key: string; value: string; copyAs?: string };
@@ -312,9 +312,17 @@ export default function OrderDetailPage() {
           padding: "18px 24px",
           display: "grid",
           gridTemplateColumns: "minmax(0, 1fr) 340px",
+          // The "Is everything OK?" banner row hugs its content.
+          gridTemplateRows: delivered && !(data.claims ?? []).length && data.claim_window_ends_at && new Date(data.claim_window_ends_at).getTime() > Date.now()
+            ? "auto minmax(0, 1fr)"
+            : undefined,
           gap: "16px",
         }}
       >
+        {delivered && !(data.claims ?? []).length && (
+          <AccountCheckPrompt orderId={data.id} windowEndsAt={data.claim_window_ends_at} onReport={() => setReportOpen(true)} />
+        )}
+
         {/* Left column */}
         <section
           className="pn cut"

@@ -67,7 +67,12 @@ export function ticketIdFrom(body: unknown): string | null {
 export type QvspCategory = "banned" | "ingame_ban" | "login" | "login_mfa" | "mfa" | "other";
 
 /** Our report reason (+ the buyer's note) → qvsp category. */
+const QVSP_CATEGORIES: QvspCategory[] = ["banned", "ingame_ban", "login", "login_mfa", "mfa", "other"];
+
 export function qvspCategory(reason: string, details?: string | null): QvspCategory {
+  // New reports use qvsp's categories directly.
+  if ((QVSP_CATEGORIES as string[]).includes(reason)) return reason as QvspCategory;
+  // Older reports (login/count/locked/other) — best guess from the note.
   const d = (details ?? "").toLowerCase();
   const mfa = /\b(2fa|mfa|two[- ]?factor|authenticator|verification code|security code|email code)\b/.test(d);
   if (reason === "login") return mfa ? "login_mfa" : "login";

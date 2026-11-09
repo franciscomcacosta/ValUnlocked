@@ -33,7 +33,7 @@ export async function POST(req: Request) {
   const attempts: Array<{ method: string; status: number; ok: boolean; note: string }> = [];
   let set: Awaited<ReturnType<typeof qvspRaw>> = { ok: false, status: 0, body: null };
   for (const method of ["POST", "PUT"] as const) {
-    set = await qvspRaw("/webhook", { method, json: { webhook_url: url } });
+    set = await qvspRaw("/webhook", { method, json: { url } });   // qvsp: "Missing url."
     attempts.push({ method, status: set.status, ok: set.ok, note: describe(set.body) });
     if (set.ok) break;
   }

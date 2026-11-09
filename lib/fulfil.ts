@@ -4,9 +4,11 @@
 // create an inventory row, flip status, DM the buyer.
 import { db } from "./supabase";
 import { notifyDiscordUser } from "./discord";
-import { buyAccount, type QvspKind } from "./qvsp";
+import { buyAccount, QvspApiError, type QvspKind, type QvspOrder } from "./qvsp";
 import { encrypt } from "./crypto";
-import type { SubTier } from "./pricing";
+import { SKIN_BRACKETS, type SubTier } from "./pricing";
+import { skinVariants } from "./skin-names";
+import { logToStaff } from "./discord";
 
 export async function fulfilOrder(orderId: string): Promise<boolean> {
   // Atomically claim this order. Duplicate IPN deliveries return null.
@@ -16,7 +18,7 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   // Load order + user + (legacy) reserved inventory_id.
   const { data: order } = await db
     .from("orders")
-    .select("id, inventory_id, user_id, users(discord_id), products(name)")
+    .select("id, inventory_id, user_id, credit_used_cents, charge_cents, users(discord_id), products(name, slug)")
     .eq("id", orderId)
     .single();
   if (!order) {
@@ -25,7 +27,7 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   }
 
   const user = order.users as unknown as { discord_id: string } | null;
-  const product = order.products as unknown as { name: string } | null;
+  const product = order.products as unknown as { name: string; slug: string } | null;
 
   // Case 1 — classic inventory row already reserved.
   if (order.inventory_id) {
@@ -48,7 +50,7 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   // Case 2 — qvsp reservation. Find the reserved qvsp_stock row for this order.
   const { data: qvspRow } = await db
     .from("qvsp_stock")
-    .select("qvsp_id, kind, region, skin_count, peak, rank_normalized")
+    .select("qvsp_id, kind, region, skin_count, peak, rank_normalized, qvsp_price_cents")
     .eq("reserved_order_id", orderId)
     .eq("claimed", false)
     .maybeSingle();
@@ -61,23 +63,44 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     return false;
   }
 
-  // Actually buy from qvsp. This spends from our qvsp balance.
-  let qvspOrder;
-  try {
-    qvspOrder = await buyAccount({
-      kind: qvspRow.kind as QvspKind,
-      id: qvspRow.qvsp_id,
-    });
-  } catch (e) {
-    console.error(`[fulfil] qvsp buy failed for order ${orderId}`, e);
-    // Leave reservation in place for a human to retry/refund.
-    await db.from("orders").update({ status: "paid" }).eq("id", orderId);
-    if (user?.discord_id) {
-      await notifyDiscordUser(
-        user.discord_id,
-        `⚠️ Your payment was received but we hit a snag delivering your account. Staff will sort it out in a few minutes.`
-      ).catch(() => {});
+  // Actually buy from qvsp (spends our qvsp balance). If the reserved
+  // listing was bought by someone else on qvsp in the meantime, swap in the
+  // next-cheapest EQUIVALENT account (same bracket / same skin, same region)
+  // — the buyer's price never changes. No equivalent → full credit refund.
+  let qvspOrder: QvspOrder | null = null;
+  let row = qvspRow;
+  for (let attempt = 0; attempt < 4 && !qvspOrder; attempt++) {
+    try {
+      qvspOrder = await buyAccount({ kind: row.kind as QvspKind, id: row.qvsp_id });
+    } catch (e) {
+      if (!isGoneError(e)) {
+        console.error(`[fulfil] qvsp buy failed for order ${orderId}`, e);
+        // Not a "sold elsewhere" error (e.g. our qvsp balance): leave the
+        // reservation for a human to retry/refund.
+        await db.from("orders").update({ status: "paid" }).eq("id", orderId);
+        await logToStaff(`⚠️ Order ${orderId}: qvsp buy failed (${describeErr(e)}). Needs a manual retry or refund.`);
+        if (user?.discord_id) {
+          await notifyDiscordUser(
+            user.discord_id,
+            `⚠️ Your payment was received but we hit a snag delivering your account. Staff will sort it out in a few minutes.`
+          ).catch(() => {});
+        }
+        return false;
+      }
+      // Sold elsewhere: hide it, release our hold, look for an equivalent.
+      await db.from("qvsp_stock").update({ removed_at: new Date().toISOString() }).eq("qvsp_id", row.qvsp_id);
+      await db.rpc("release_qvsp_stock", { p_order_id: orderId });
+      const alt = await reserveEquivalent(orderId, row);
+      if (!alt) {
+        await refundSoldOut(orderId, order.user_id as string, user?.discord_id ?? null, product?.name ?? "your account");
+        return false;
+      }
+      await logToStaff(`🔁 Order ${orderId}: ${row.qvsp_id} sold on qvsp before we bought it — swapped to ${alt.qvsp_id}.`);
+      row = alt;
     }
+  }
+  if (!qvspOrder) {
+    await refundSoldOut(orderId, order.user_id as string, user?.discord_id ?? null, product?.name ?? "your account");
     return false;
   }
 
@@ -101,13 +124,13 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
           .single()
       ).data!.product_id,
       source: "qvsp",
-      acquired_from: `qvsp:${qvspRow.qvsp_id}`,
+      acquired_from: `qvsp:${row.qvsp_id}`,
       cost_cents: null,
       login_enc: encrypt(creds.login),
       password_enc: encrypt(creds.password),
       email_enc: encrypt(creds.email ?? ""),
       email_password_enc: encrypt(creds.email_password ?? ""),
-      notes: `Region ${qvspRow.region} · ${qvspRow.skin_count} skins · peak ${qvspRow.peak ?? "N/A"}`,
+      notes: `Region ${row.region} · ${row.skin_count} skins · peak ${row.peak ?? "N/A"}`,
       status: "sold",
     })
     .select("id")
@@ -125,7 +148,7 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   }
 
   // Mark qvsp row claimed, attach inventory to the order, flip order status.
-  await db.rpc("claim_qvsp_stock", { p_qvsp_id: qvspRow.qvsp_id, p_order_id: orderId });
+  await db.rpc("claim_qvsp_stock", { p_qvsp_id: row.qvsp_id, p_order_id: orderId });
   await db
     .from("orders")
     .update({
@@ -138,7 +161,7 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   if (user?.discord_id) {
     await notifyDiscordUser(
       user.discord_id,
-      `✅ Your Valorant account is ready — **${qvspRow.region}**, **${qvspRow.skin_count} skins**, peak **${qvspRow.peak ?? "N/A"}**.\n` +
+      `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n` +
         `View credentials: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
         `Change the account and email passwords on first login.`
     ).catch((e) => console.error("[fulfil] DM failed", e));
@@ -188,5 +211,88 @@ async function maybeDispatchEmailExtraction(
     }
   } catch (e) {
     console.error("[fulfil] worker fetch error:", e);
+  }
+}
+
+
+// ─── sold-elsewhere fallback ───────────────────────────────────────────
+
+type StockRow = {
+  qvsp_id: string; kind: string; region: string; skin_count: number | null;
+  peak: string | null; rank_normalized: string | null; qvsp_price_cents: number | null;
+};
+
+/** qvsp refusing because the listing is gone (sold / pulled / not found). */
+function isGoneError(e: unknown): boolean {
+  if (e instanceof QvspApiError) {
+    if ([404, 409, 410].includes(e.status)) return true;
+    return /sold|not.?found|unavailable|no.?longer|taken|gone|reserved|out.?of.?stock/i.test(`${e.code} ${e.message}`);
+  }
+  return false;
+}
+
+function describeErr(e: unknown): string {
+  return e instanceof QvspApiError ? `${e.status} ${e.code}: ${e.message}` : String(e).slice(0, 200);
+}
+
+/** Reserve the cheapest equivalent listing for this order, or null.
+ *  Bracket orders → same skin-count bracket; skin orders → has that skin;
+ *  X-Ray (specific account) orders have no equivalent. */
+async function reserveEquivalent(orderId: string, gone: StockRow): Promise<StockRow | null> {
+  const { data: o } = await db.from("orders").select("products(slug, name)").eq("id", orderId).single();
+  const prod = (o?.products as unknown as { slug: string; name: string } | null) ?? null;
+  if (!prod || prod.slug === "qvsp-xray") return null;
+
+  let q = db
+    .from("qvsp_stock")
+    .select("qvsp_id, kind, region, skin_count, peak, rank_normalized, qvsp_price_cents")
+    .eq("region", gone.region)
+    .eq("kind", gone.kind)
+    .is("reserved_order_id", null)
+    .is("removed_at", null)
+    .eq("claimed", false)
+    .lte("public_at", new Date().toISOString())
+    .neq("qvsp_id", gone.qvsp_id);
+
+  if (prod.slug.startsWith("qvsp-skin-")) {
+    q = q.overlaps("skins", skinVariants(prod.name));
+  } else {
+    const bracket = SKIN_BRACKETS.find((b) => prod.slug === `qvsp-${b.name}`);
+    if (!bracket) return null;
+    // Stay within what the bracket was priced to cover.
+    q = q.gte("skin_count", bracket.minSkins).lte("skin_count", bracket.maxSkins)
+         .lte("qvsp_price_cents", bracket.maxAcceptableCostCents);
+  }
+
+  const { data: candidates } = await q.order("qvsp_price_cents", { ascending: true }).limit(10);
+  for (const c of candidates ?? []) {
+    const { data: picked } = await db.rpc("reserve_qvsp_stock", { p_order_id: orderId, p_qvsp_id: c.qvsp_id });
+    if (picked) return c as StockRow;
+  }
+  return null;
+}
+
+/** No equivalent left: refund everything the client paid to credit. */
+async function refundSoldOut(orderId: string, userId: string, discordId: string | null, itemName: string) {
+  const { data: o } = await db.from("orders").select("credit_used_cents, charge_cents, status").eq("id", orderId).single();
+  const paid = ((o?.credit_used_cents as number) ?? 0) + ((o?.charge_cents as number) ?? 0);
+  await db.rpc("release_qvsp_stock", { p_order_id: orderId });
+  const { data: upd } = await db
+    .from("orders")
+    .update({ status: "refunded_credit" })
+    .eq("id", orderId)
+    .neq("status", "refunded_credit")
+    .select("id");
+  if (!upd?.length) return;   // already refunded
+  if (paid > 0) {
+    await db.rpc("add_credit", { p_user_id: userId, p_cents: paid, p_reason: "sold_out_refund", p_order_id: orderId });
+  }
+  await logToStaff(`💸 Order ${orderId}: sold out on qvsp with no equivalent — refunded €${(paid / 100).toFixed(2)} to credit.`);
+  if (discordId) {
+    await notifyDiscordUser(
+      discordId,
+      `Sorry — the last **${itemName}** account sold out the moment you paid, and there was no matching one left. ` +
+        `We've refunded the full **€${(paid / 100).toFixed(2)}** to your Val Unlocked credit — it's ready to spend now.`
+    ).catch(() => {});
   }
 }

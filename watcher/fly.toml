@@ -1,0 +1,21 @@
+# Val Unlocked — qvsp stock watcher.
+#
+# COST GUARD (target ≤ $5/month, expected ≈ $2):
+#   • exactly ONE machine, shared-cpu-1x, 256 MB — `fly scale count 1`
+#   • NO [http_service] / [[services]] → no public IPs, nothing to auto-scale
+#   • NO volumes
+#   • always running (it's a loop, not a web server) and restarted on crash
+# Don't add services, volumes or more machines without re-checking cost.
+
+app = 'valo-shop-watcher'
+primary_region = 'cdg'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[[restart]]
+  policy = 'always'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'

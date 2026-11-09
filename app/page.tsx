@@ -7,9 +7,10 @@
 // right-checkout panel. Tabs switch the main area contents without changing
 // the shell.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LockLogo } from "@/components/lock-logo";
 import { ClaimOutcomeModal } from "@/components/claims";
+import { useStockFeed, useStockVersion, DropToasts, type StockDrop } from "@/components/live-stock";
 import { TOPUP_TIERS, TOPUP_BONUS_PCT } from "@/lib/pricing";
 
 // ----- Types ----------------------------------------------------
@@ -96,17 +97,6 @@ interface Order {
 
 const eur = (c: number) => (c / 100).toFixed(2);
 
-// Sample live feed until /api/public-stats exists.
-const SAMPLE_FEED = [
-  { u: "cyph3r",   item: "Reaver Vandal",       t: "just now", c: "#d1548d" },
-  { u: "blitz_",   item: "Prime Vandal",        t: "2m ago",   c: "#d1548d" },
-  { u: "neko",     item: "26–50 skins · EU", t: "5m ago", c: "#ece8e1" },
-  { u: "veyl",     item: "Elderflame Vandal",   t: "8m ago",   c: "#fad663" },
-  { u: "ayva",     item: "Oni Phantom",         t: "11m ago",  c: "#d1548d" },
-  { u: "mirai",    item: "Araxys Operator",     t: "14m ago",  c: "#f5955b" },
-  { u: "hollow",   item: "51–100 skins · AP", t: "17m ago", c: "#ece8e1" },
-  { u: "pixel",    item: "RGX 11z Pro Vandal",  t: "22m ago",  c: "#f5955b" },
-];
 
 // ================================================================
 // Root
@@ -118,6 +108,7 @@ export default function Page() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabKey>("stock");
+  const stockFeed = useStockFeed();
   const [topup, setTopup] = useState<{ open: boolean; returnId: string | null }>({ open: false, returnId: null });
 
   const reloadMe = useCallback(() => {
@@ -178,7 +169,7 @@ export default function Page() {
         overflow: "hidden",
       }}
     >
-      <Header me={me} tab={tab} onTab={setTab} isUltra={isUltra} onTopup={() => setTopup({ open: true, returnId: null })} />
+      <Header me={me} tab={tab} onTab={setTab} isUltra={isUltra} onTopup={() => setTopup({ open: true, returnId: null })} drops={stockFeed.drops} />
 
       <main
         style={{
@@ -199,6 +190,7 @@ export default function Page() {
       </main>
 
       <ClaimOutcomeModal onCredited={reloadMe} />
+      <DropToasts earlyAccess={me.sub?.tier === "premium" || me.sub?.tier === "ultra"} />
 
       {topup.open && (
         <TopupModal
@@ -212,14 +204,25 @@ export default function Page() {
   );
 }
 
+const DROP_TIER_COLOR: Record<string, string> = { Ultra: "#fad663", Exclusive: "#f5955b", Premium: "#d1548d" };
+function dropAgo(iso: string): string {
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!Number.isFinite(m) || m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
+}
+
 // ================================================================
 // Header
 // ================================================================
 
 function Header({
-  me, tab, onTab, isUltra, onTopup,
-}: { me: Me; tab: TabKey; onTab: (t: TabKey) => void; isUltra: boolean; onTopup: () => void }) {
-  const feed = SAMPLE_FEED.concat(SAMPLE_FEED);
+  me, tab, onTab, isUltra, onTopup, drops,
+}: { me: Me; tab: TabKey; onTab: (t: TabKey) => void; isUltra: boolean; onTopup: () => void; drops: StockDrop[] }) {
+  // Real restocks from qvsp (seeded on load, then live from the watcher).
+  // Duplicated once so the marquee loops seamlessly.
+  const feed = drops.length ? drops.concat(drops) : [];
   const subDaysLeft = me.sub
     ? Math.max(0, Math.floor(
         (new Date(me.sub.periodEnd).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
@@ -467,15 +470,19 @@ function Header({
             Live
           </span>
         </div>
-        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }} aria-label="Recent purchases">
-          <div className="marq">
-            {feed.map((e, i) => (
-              <span key={i} style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>
-                <b style={{ color: "var(--vu-ivory)", fontWeight: 600 }}>{e.u}</b> unlocked{" "}
-                <b style={{ color: e.c, fontWeight: 600 }}>{e.item}</b> · {e.t}
-              </span>
-            ))}
-          </div>
+        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }} aria-label="Recent restocks">
+          {feed.length ? (
+            <div className="marq">
+              {feed.map((e, i) => (
+                <span key={i} style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>
+                  New drop · <b style={{ color: DROP_TIER_COLOR[e.tier] ?? "var(--vu-ivory)", fontWeight: 600 }}>{e.skin}</b>{" "}
+                  · {e.region} · {e.skins} skins{e.at ? ` · ${dropAgo(e.at)}` : ""}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>Watching for new drops…</span>
+          )}
         </div>
       </div>
     </header>
@@ -588,6 +595,19 @@ function StockTab({ me }: { me: Me }) {
 
   useEffect(() => { loadBrackets(); }, [loadBrackets]);
   useEffect(() => { loadFeatured(region); }, [region, loadFeatured]);
+
+  // Live: when the stock watcher reports changes, refresh quietly (no
+  // skeletons) so sold accounts vanish and restocks appear in place.
+  const stockV = useStockVersion();
+  useEffect(() => {
+    if (!stockV) return;
+    loadBrackets();
+    fetch(`/api/stock/all-skins?region=${region}`)
+      .then((res) => res.json())
+      .then((d) => { if (Array.isArray(d.skins)) setFeatured(d.skins); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockV]);
 
   // Clear selection + reset pagination when switching mode/region
   useEffect(() => { setSel(null); setSkinPage(0); setWeaponTab(""); }, [mode, region]);
@@ -2210,7 +2230,12 @@ function XrayInspector({ onOrders }: { onOrders: () => void }) {
     try { localStorage.setItem("vu_xray_onboarded", "1"); } catch { /* storage blocked */ }
   }
 
+  const stockV = useStockVersion();
+  const lastV = useRef(stockV);
   useEffect(() => {
+    // A live stock tick refreshes in place; any other change shows skeletons.
+    const live = stockV !== lastV.current;
+    lastV.current = stockV;
     const params = new URLSearchParams({ region, page: String(page), sort, dir: asc ? "asc" : "desc" });
     const ms = parseInt(minSkins, 10) || 0;
     if (ms > 0) params.set("minSkins", String(ms));
@@ -2218,7 +2243,7 @@ function XrayInspector({ onOrders }: { onOrders: () => void }) {
 
     let cancelled = false;
     const h = setTimeout(() => {
-      setData(null);
+      if (!live) setData(null);
       fetch(`/api/stock/xray?${params}`)
         .then((r) => r.json())
         .then((d) => {
@@ -2232,7 +2257,7 @@ function XrayInspector({ onOrders }: { onOrders: () => void }) {
         .catch(() => { if (!cancelled) setData({ items: [], total: 0, totalPages: 0 }); });
     }, skinSearch ? 250 : 0);
     return () => { cancelled = true; clearTimeout(h); };
-  }, [region, page, sort, asc, minSkins, skinSearch]);
+  }, [region, page, sort, asc, minSkins, skinSearch, stockV]);
 
   useEffect(() => { setPage(1); }, [region, sort, asc, minSkins, skinSearch]);
   useEffect(() => { setStep("idle"); setErr(""); }, [selected?.account_id]);
@@ -2838,6 +2863,7 @@ function AutobuyManager({ me, onTopup }: { me: Me; onTopup: () => void }) {
 
   // Live "matching right now" preview of the draft.
   const body = JSON.stringify(draftToBody(draft));
+  const stockV = useStockVersion();
   useEffect(() => {
     let cancelled = false;
     const h = setTimeout(async () => {
@@ -2848,7 +2874,7 @@ function AutobuyManager({ me, onTopup }: { me: Me; onTopup: () => void }) {
       } catch { /* preview only */ }
     }, 350);
     return () => { cancelled = true; clearTimeout(h); };
-  }, [body]);
+  }, [body, stockV]);
 
   function selectRule(r: AutobuyRule) {
     setSelectedId(r.id); setDraft(draftFromRule(r)); setErr(""); setSaved(false);

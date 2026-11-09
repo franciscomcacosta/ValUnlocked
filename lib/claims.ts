@@ -123,7 +123,7 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
   if (!accountUsername) return fail("lookup", "couldn't read the account login for this order");
 
   const message = `${reasonLabel}${c.details ? ` — ${c.details}` : ""}. Buyer screen recording attached.`;
-  const opened = await openTicket({ qvspOrderId, reason: c.reason, message, accountUsername });
+  const opened = await openTicket({ qvspOrderId, reason: c.reason, message, accountUsername, details: c.details });
   if (!opened.ok || !opened.ticketId) return fail("open ticket", opened.body);
 
   await db

@@ -63,12 +63,32 @@ export function ticketIdFrom(body: unknown): string | null {
   return pick(body, ["ticket_id", "ticket.id", "ticket.ticket_id", "data.ticket_id", "data.id", "id", "replacement.ticket_id"]);
 }
 
-export async function openTicket(opts: { qvspOrderId: string; reason: string; message: string; accountUsername?: string | null }) {
+/** qvsp's allowed ticket categories. */
+export type QvspCategory = "banned" | "ingame_ban" | "login" | "login_mfa" | "mfa" | "other";
+
+/** Our report reason (+ the buyer's note) → qvsp category. */
+export function qvspCategory(reason: string, details?: string | null): QvspCategory {
+  const d = (details ?? "").toLowerCase();
+  const mfa = /\b(2fa|mfa|two[- ]?factor|authenticator|verification code|security code|email code)\b/.test(d);
+  if (reason === "login") return mfa ? "login_mfa" : "login";
+  if (reason === "locked") return /(in[- ]?game|queue|ranked|penalt|restrict|comp)/.test(d) ? "ingame_ban" : "banned";
+  if (mfa) return "mfa";
+  return "other"; // wrong skin count, something else
+}
+
+export async function openTicket(opts: {
+  qvspOrderId: string;
+  reason: string;
+  message: string;
+  accountUsername?: string | null;
+  details?: string | null;
+}) {
   const res = await qvspRaw("/replace", {
     json: {
       order_id: opts.qvspOrderId,
-      // qvsp requires the login of the account being replaced.
+      // Required by qvsp: login of the account being replaced + a category.
       account_username: opts.accountUsername ?? undefined,
+      category: qvspCategory(opts.reason, opts.details),
       reason: opts.reason,
       message: opts.message,
     },

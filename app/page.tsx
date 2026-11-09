@@ -471,6 +471,11 @@ function StockTab({ me }: { me: Me }) {
   const [useCredit, setUseCredit] = useState(true);
   const [query, setQuery] = useState<string>("");
   const [skinPage, setSkinPage] = useState<number>(0);
+  // Weapon sub-tab filter inside the skin mode.
+  // "" = Featured (top-tier curated-ish view: Ultra + Exclusive + a couple Premiums)
+  // "Vandal" | "Phantom" | ... = exact weapon match
+  // "Melee" = any knife / dagger / sword / karambit / kunai (not real "melee" weapon)
+  const [weaponTab, setWeaponTab] = useState<string>("");
 
   const loadBrackets = useCallback(() => {
     fetch("/api/stock/brackets")
@@ -493,9 +498,10 @@ function StockTab({ me }: { me: Me }) {
   useEffect(() => { loadBrackets(); }, [loadBrackets]);
   useEffect(() => { loadFeatured(region); }, [region, loadFeatured]);
 
-  // Clear selection + reset pagination when switching mode/region/query
-  useEffect(() => { setSel(null); setSkinPage(0); }, [mode, region]);
-  useEffect(() => { setSkinPage(0); }, [query]);
+  // Clear selection + reset pagination when switching mode/region
+  useEffect(() => { setSel(null); setSkinPage(0); setWeaponTab(""); }, [mode, region]);
+  // Reset pagination when the filter result set changes
+  useEffect(() => { setSkinPage(0); }, [query, weaponTab]);
 
   const totalsByRegion: Partial<Record<Region, number>> = {};
   for (const row of brackets ?? []) {
@@ -503,12 +509,55 @@ function StockTab({ me }: { me: Me }) {
   }
 
   const visibleBrackets = (brackets ?? []).filter((b) => b.region === region);
-  const visibleSkins = (featured ?? []).filter((s) =>
+
+  // --- Skin tab filters: search + weapon sub-tab ---
+  const MELEE_WEAPONS = ["Knife", "Melee", "Karambit", "Kunai", "Dagger", "Sword", "Claw", "Axe", "Blade"];
+  function isMelee(weapon: string): boolean {
+    return MELEE_WEAPONS.some((w) => weapon.toLowerCase().includes(w.toLowerCase()));
+  }
+
+  // Featured = top-tier skins across weapons (Ultra + Exclusive).
+  // The designer's "Featured" tab was a curated highlight reel of the
+  // 8 flashiest skins; we approximate by showing the highest-tier ones
+  // first, which is already how /api/stock/all-skins sorts.
+  function matchesWeaponTab(s: FeaturedSkinRow): boolean {
+    if (!weaponTab) {
+      // Featured: Ultra + Exclusive only
+      return s.tier === "Ultra" || s.tier === "Exclusive";
+    }
+    if (weaponTab === "Melee") return isMelee(s.weapon);
+    return s.weapon.toLowerCase() === weaponTab.toLowerCase();
+  }
+
+  const searchFiltered = (featured ?? []).filter((s) =>
     query
       ? s.label.toLowerCase().includes(query.toLowerCase()) ||
         s.weapon.toLowerCase().includes(query.toLowerCase())
       : true
   );
+  const visibleSkins = searchFiltered.filter(matchesWeaponTab);
+
+  // Weapon tab counts (post-search, so when you type "reaver" the counts
+  // reflect what's actually matched).
+  const weaponTabs: Array<{ label: string; count: number }> = [
+    { label: "Featured", count: searchFiltered.filter((s) => s.tier === "Ultra" || s.tier === "Exclusive").length },
+    { label: "Melee",    count: searchFiltered.filter((s) => isMelee(s.weapon)).length },
+  ];
+  const weaponsSeen = new Map<string, number>();
+  for (const s of searchFiltered) {
+    if (isMelee(s.weapon)) continue;
+    weaponsSeen.set(s.weapon, (weaponsSeen.get(s.weapon) ?? 0) + 1);
+  }
+  const ORDERED_WEAPONS = ["Vandal", "Phantom", "Operator", "Sheriff", "Ghost", "Classic", "Spectre", "Bulldog", "Guardian", "Marshal", "Judge", "Bucky", "Stinger", "Ares", "Odin", "Shorty", "Frenzy", "Outlaw"];
+  for (const w of ORDERED_WEAPONS) {
+    const c = weaponsSeen.get(w);
+    if (c && c > 0) weaponTabs.push({ label: w, count: c });
+  }
+  // Catch-all for weapons we didn't pre-order
+  for (const [w, c] of weaponsSeen.entries()) {
+    if (!ORDERED_WEAPONS.includes(w)) weaponTabs.push({ label: w, count: c });
+  }
+
   const regionTotal = visibleBrackets.reduce((a, b) => a + b.available, 0);
 
   const subDiscountPct = me.sub ? TIER_DISCOUNT_PCT[me.sub.tier] : 0;
@@ -712,67 +761,18 @@ function StockTab({ me }: { me: Me }) {
             <>
               {featured === null ? (
                 <SkeletonGrid rows={3} cols={4} />
-              ) : visibleSkins.length === 0 ? (
-                <EmptyState region={region} forSkins />
               ) : (
-                (() => {
-                  const totalPages = Math.max(1, Math.ceil(visibleSkins.length / SKINS_PER_PAGE));
-                  const page = Math.min(skinPage, totalPages - 1);
-                  const start = page * SKINS_PER_PAGE;
-                  const slice = visibleSkins.slice(start, start + SKINS_PER_PAGE);
-                  return (
-                    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "10px" }}>
-                      <div
-                        style={{
-                          flex: 1,
-                          minHeight: 0,
-                          display: "grid",
-                          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                          gridTemplateRows: "repeat(3, minmax(0, 1fr))",
-                          gap: "10px",
-                        }}
-                      >
-                        {slice.map((s) => (
-                          <SkinTile
-                            key={s.key}
-                            row={s}
-                            region={region}
-                            selected={sel?.kind === "skin" && sel.row.label === s.label}
-                            onPick={() => setSel({ kind: "skin", row: s })}
-                          />
-                        ))}
-                      </div>
-                      <div
-                        style={{
-                          flex: "none",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <button
-                          className="btn btn-soft cs"
-                          style={{ height: "34px", fontSize: "15px" }}
-                          onClick={() => setSkinPage((p) => Math.max(0, p - 1))}
-                          disabled={page === 0}
-                        >
-                          ← Prev
-                        </button>
-                        <span className="bc num" style={{ fontWeight: 600, fontSize: "15px" }}>
-                          Page {page + 1} of {totalPages} · {visibleSkins.length} skins
-                        </span>
-                        <button
-                          className="btn btn-soft cs"
-                          style={{ height: "34px", fontSize: "15px" }}
-                          onClick={() => setSkinPage((p) => Math.min(totalPages - 1, p + 1))}
-                          disabled={page >= totalPages - 1}
-                        >
-                          Next →
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()
+                <SkinGrid
+                  visibleSkins={visibleSkins}
+                  weaponTabs={weaponTabs}
+                  weaponTab={weaponTab}
+                  onWeaponTab={setWeaponTab}
+                  region={region}
+                  skinPage={skinPage}
+                  setSkinPage={setSkinPage}
+                  sel={sel}
+                  setSel={setSel}
+                />
               )}
             </>
           )}
@@ -979,6 +979,137 @@ function StockTab({ me }: { me: Me }) {
           </div>
         )}
       </aside>
+    </div>
+  );
+}
+
+// ---- Skin grid with weapon sub-tabs + auto-select + entrance animation ----
+
+function SkinGrid({
+  visibleSkins, weaponTabs, weaponTab, onWeaponTab,
+  region, skinPage, setSkinPage, sel, setSel,
+}: {
+  visibleSkins: FeaturedSkinRow[];
+  weaponTabs: Array<{ label: string; count: number }>;
+  weaponTab: string;
+  onWeaponTab: (t: string) => void;
+  region: Region;
+  skinPage: number;
+  setSkinPage: (n: number | ((p: number) => number)) => void;
+  sel: Selected | null;
+  setSel: (s: Selected | null) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(visibleSkins.length / SKINS_PER_PAGE));
+  const page = Math.min(skinPage, Math.max(0, totalPages - 1));
+  const start = page * SKINS_PER_PAGE;
+  const slice = visibleSkins.slice(start, start + SKINS_PER_PAGE);
+
+  // Auto-select the first tile of the current slice whenever the page or
+  // filter changes — sidebar is never empty if there's stock. Preserve
+  // user's active selection if it's still visible on this page.
+  useEffect(() => {
+    if (slice.length === 0) return;
+    const currentVisible = slice.some(
+      (s) => sel?.kind === "skin" && sel.row.label === s.label
+    );
+    if (!currentVisible) {
+      setSel({ kind: "skin", row: slice[0] });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, weaponTab, visibleSkins.length === 0 ? 0 : visibleSkins[0]?.label, region]);
+
+  // Bump a keyframe key when the slice changes so each tile's rise-in
+  // entrance animation replays. React keys on the grid container.
+  const pageKey = `${region}:${weaponTab}:${page}`;
+
+  if (visibleSkins.length === 0) {
+    return <EmptyState region={region} forSkins />;
+  }
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "10px" }}>
+      {/* Weapon sub-tabs */}
+      <div className="seg" role="group" aria-label="Weapon" style={{ flexWrap: "wrap", alignSelf: "flex-start" }}>
+        {weaponTabs.map((w) => {
+          const label = w.label === "Featured" ? "" : w.label;
+          const active = weaponTab === label;
+          return (
+            <button
+              key={w.label}
+              className={active ? "on" : ""}
+              onClick={() => onWeaponTab(label)}
+              disabled={w.count === 0}
+              title={w.count === 0 ? "No stock in this weapon class" : undefined}
+            >
+              {w.label} <span className="c num">{w.count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Grid */}
+      <div
+        key={pageKey}
+        className="skin-grid-rise"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gridTemplateRows: "repeat(3, minmax(0, 1fr))",
+          gap: "10px",
+        }}
+      >
+        {slice.map((s, i) => (
+          <div
+            key={s.key}
+            style={{
+              // Stagger each tile's entrance animation by ~40ms so the
+              // whole page doesn't fade in as one block.
+              animation: "skin-rise 420ms cubic-bezier(.2,.8,.2,1) both",
+              animationDelay: `${i * 40}ms`,
+              minHeight: 0,
+            }}
+          >
+            <SkinTile
+              row={s}
+              region={region}
+              selected={sel?.kind === "skin" && sel.row.label === s.label}
+              onPick={() => setSel({ kind: "skin", row: s })}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Pager */}
+      <div
+        style={{
+          flex: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <button
+          className="btn btn-soft cs"
+          style={{ height: "34px", fontSize: "15px" }}
+          onClick={() => setSkinPage((p) => Math.max(0, p - 1))}
+          disabled={page === 0}
+        >
+          ← Prev
+        </button>
+        <span className="bc num" style={{ fontWeight: 600, fontSize: "15px" }}>
+          Page {page + 1} of {totalPages} · {visibleSkins.length} skins
+        </span>
+        <button
+          className="btn btn-soft cs"
+          style={{ height: "34px", fontSize: "15px" }}
+          onClick={() => setSkinPage((p) => Math.min(totalPages - 1, p + 1))}
+          disabled={page >= totalPages - 1}
+        >
+          Next →
+        </button>
+      </div>
     </div>
   );
 }

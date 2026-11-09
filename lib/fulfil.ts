@@ -117,6 +117,13 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     return false;
   }
 
+  // Keep qvsp's own order id — replacement tickets need it. Separate update so
+  // a not-yet-migrated column (006) can never block delivery.
+  if (qvspOrder.id) {
+    const { error: qErr } = await db.from("orders").update({ qvsp_order_id: qvspOrder.id }).eq("id", orderId);
+    if (qErr) console.warn("[fulfil] couldn't save qvsp_order_id (run migration 006)", qErr.message);
+  }
+
   // Mark qvsp row claimed, attach inventory to the order, flip order status.
   await db.rpc("claim_qvsp_stock", { p_qvsp_id: qvspRow.qvsp_id, p_order_id: orderId });
   await db

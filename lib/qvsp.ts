@@ -160,14 +160,36 @@ export async function buyAccount(opts: { kind: QvspKind; id: string }): Promise<
   });
 }
 
+/** Fetch one qvsp order (credentials included once completed). */
+export async function getOrder(orderId: string): Promise<QvspOrder> {
+  const res = await call<QvspOrder & { order?: QvspOrder }>(`/orders/${encodeURIComponent(orderId)}`);
+  return (res.order ?? res) as QvspOrder;
+}
+
 /**
- * Open a replacement claim (their refund equivalent) for a sold account.
+ * Low-level request for endpoints whose shapes aren't pinned down yet
+ * (replacement tickets). Never throws on HTTP errors — returns status +
+ * parsed body so callers can log exactly what qvsp said.
+ * Pass a FormData body for uploads (content-type is then left to fetch).
  */
-export async function requestReplacement(orderId: string, reason: string): Promise<unknown> {
-  return call("/replacements", {
-    method: "POST",
-    body: JSON.stringify({ order_id: orderId, reason }),
-  });
+export async function qvspRaw(
+  path: string,
+  init: { method?: string; json?: unknown; form?: FormData } = {}
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  if (!QVSP_KEY) return { ok: false, status: 500, body: { error: "no_key" } };
+  const headers: Record<string, string> = { authorization: `Bearer ${QVSP_KEY}` };
+  let body: BodyInit | undefined;
+  if (init.form) body = init.form;
+  else if (init.json !== undefined) {
+    headers["content-type"] = "application/json";
+    body = JSON.stringify(init.json);
+  }
+  const res = await fetch(`${QVSP_BASE}${path}`, { method: init.method ?? (body ? "POST" : "GET"), headers, body });
+  const text = await res.text();
+  let parsed: unknown = text.slice(0, 2000);
+  try { parsed = text ? JSON.parse(text) : {}; } catch { /* html / text */ }
+  const okFlag = (parsed as { ok?: boolean })?.ok;
+  return { ok: res.ok && okFlag !== false, status: res.status, body: parsed };
 }
 
 /**

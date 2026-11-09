@@ -8,6 +8,7 @@
 //   /api/auth/callback    — Discord posts the code back here
 //   /api/auth/logout      — clearing cookie needs no session
 //   /api/ipn              — NOWPayments webhook (no browser, no cookie)
+//   /api/webhooks/*       — qvsp webhook (checks its own ?token=)
 //   /api/cron/*           — external cron (uses CRON_SECRET bearer token)
 //   /api/public-stats     — kept public ONLY if used; harmless if gated too
 //
@@ -21,6 +22,7 @@ const PUBLIC_API_PATHS = [
   "/api/auth/callback",
   "/api/auth/logout",
   "/api/ipn",
+  "/api/webhooks/",   // prefix — each webhook verifies its own secret
   "/api/cron/",       // prefix match — any /api/cron/* is cron-secret-gated internally
 ];
 

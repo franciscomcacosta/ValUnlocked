@@ -1,0 +1,121 @@
+// qvsp replacement tickets.
+//
+// Endpoints (from the API's own root listing):
+//   POST /replace                    open a ticket
+//   POST /replace/proof              upload a video
+//   POST /replace/{ticket}/proof     attach proof to a ticket
+//   POST /replace/{ticket}/say       post a message on a ticket
+//   GET  /replace/{ticket}           ticket state
+//
+// The request/response FIELD NAMES are not documented to us yet ("Partner
+// Api Docs.md" in the onboarding kit). Every guess lives in this file and
+// readers accept several spellings, so matching the docs is a local edit.
+// Nothing here is trusted blindly: outcomes are always re-read with GET.
+import { qvspRaw, getOrder, type QvspCredentials } from "./qvsp";
+
+export type TicketState = "open" | "approved" | "denied" | "closed" | "unknown";
+
+export interface TicketView {
+  id: string;
+  state: TicketState;
+  rawStatus: string | null;
+  credentials: QvspCredentials | null;   // replacement account, if qvsp gave one
+  replacementOrderId: string | null;
+  note: string | null;
+  raw: unknown;
+}
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** First non-empty string among dotted paths, e.g. "ticket.id". */
+function pick(o: unknown, paths: string[]): string | null {
+  for (const p of paths) {
+    let cur: unknown = o;
+    for (const k of p.split(".")) cur = isObj(cur) ? cur[k] : undefined;
+    if (typeof cur === "string" && cur.trim()) return cur.trim();
+    if (typeof cur === "number") return String(cur);
+  }
+  return null;
+}
+
+function findCredentials(o: unknown, depth = 0): QvspCredentials | null {
+  if (!isObj(o) || depth > 4) return null;
+  if (typeof o.login === "string" && typeof o.password === "string") return o as QvspCredentials;
+  for (const v of Object.values(o)) {
+    const c = findCredentials(v, depth + 1);
+    if (c) return c;
+  }
+  return null;
+}
+
+function mapState(s: string | null): TicketState {
+  const v = (s ?? "").toLowerCase();
+  if (!v) return "unknown";
+  if (/(approv|accept|replaced|resolved|refund)/.test(v)) return "approved";
+  if (/(deni|reject|declin)/.test(v)) return "denied";
+  if (/(clos|cancel|expir)/.test(v)) return "closed";
+  if (/(open|pending|review|wait|new|progress)/.test(v)) return "open";
+  return "unknown";
+}
+
+export function ticketIdFrom(body: unknown): string | null {
+  return pick(body, ["ticket_id", "ticket.id", "ticket.ticket_id", "data.ticket_id", "data.id", "id", "replacement.ticket_id"]);
+}
+
+export async function openTicket(opts: { qvspOrderId: string; reason: string; message: string }) {
+  const res = await qvspRaw("/replace", {
+    json: { order_id: opts.qvspOrderId, reason: opts.reason, message: opts.message },
+  });
+  return { ...res, ticketId: res.ok ? ticketIdFrom(res.body) : null };
+}
+
+/** Upload the video file; returns qvsp's proof reference if it gives one. */
+export async function uploadVideo(opts: { ticketId: string; file: Blob; filename: string }) {
+  const form = new FormData();
+  form.append("ticket_id", opts.ticketId);
+  form.append("video", opts.file, opts.filename);
+  const res = await qvspRaw("/replace/proof", { form });
+  const proofRef = res.ok
+    ? pick(res.body, ["proof_id", "proof.id", "id", "video_id", "file_id", "url", "proof.url", "video_url"])
+    : null;
+  return { ...res, proofRef };
+}
+
+export async function attachProof(opts: { ticketId: string; proofRef: string | null; videoUrl: string | null }) {
+  return qvspRaw(`/replace/${encodeURIComponent(opts.ticketId)}/proof`, {
+    json: {
+      ...(opts.proofRef ? { proof_id: opts.proofRef } : {}),
+      ...(opts.videoUrl ? { url: opts.videoUrl, video_url: opts.videoUrl } : {}),
+    },
+  });
+}
+
+export async function sayOnTicket(ticketId: string, message: string) {
+  return qvspRaw(`/replace/${encodeURIComponent(ticketId)}/say`, { json: { message } });
+}
+
+/** Read a ticket and normalise it. Fetches the replacement order's
+ *  credentials when qvsp points at a new order instead of inlining them. */
+export async function getTicket(ticketId: string): Promise<TicketView | null> {
+  const res = await qvspRaw(`/replace/${encodeURIComponent(ticketId)}`);
+  if (!res.ok) return null;
+  const t = isObj(res.body) && isObj(res.body.ticket) ? res.body.ticket : res.body;
+  const rawStatus = pick(t, ["status", "state", "decision", "outcome", "result"]);
+  let credentials = findCredentials(t);
+  const replacementOrderId = pick(t, [
+    "replacement_order_id", "new_order_id", "replacement.order_id", "replacement.id", "new_order.id",
+  ]);
+  if (!credentials && replacementOrderId) {
+    try { credentials = (await getOrder(replacementOrderId)).credentials ?? null; } catch { /* leave null */ }
+  }
+  return {
+    id: ticketId,
+    state: mapState(rawStatus),
+    rawStatus,
+    credentials: credentials?.login && credentials?.password ? credentials : null,
+    replacementOrderId,
+    note: pick(t, ["note", "reason", "message", "staff_note", "resolution"]),
+    raw: res.body,
+  };
+}

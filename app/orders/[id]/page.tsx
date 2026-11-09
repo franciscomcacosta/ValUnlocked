@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { LockLogo } from "@/components/lock-logo";
+import { ReportProblemModal, ClaimStatusCard, type ClaimSummary } from "@/components/claims";
 
 // ----- Types the /api/orders/[id] route is expected to return -----
 type Credential = { key: string; value: string; copyAs?: string };
@@ -49,6 +50,8 @@ type OrderPayload = {
   skins_total: number;
   agents: Agent[];
   timeline: TimelineStep[];
+  claim_window_ends_at: string | null;
+  claims: ClaimSummary[];
 };
 
 const TIER_COLOR: Record<string, string> = {
@@ -109,6 +112,8 @@ export default function OrderDetailPage() {
   const [err, setErr] = useState<string | null>(null);
   const [reveal, setReveal] = useState(false);
   const [copied, setCopied] = useState<string>("");
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -134,7 +139,7 @@ export default function OrderDetailPage() {
       cancelled = true;
       clearInterval(tick);
     };
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function copy(key: string, value: string) {
     try {
@@ -917,13 +922,34 @@ export default function OrderDetailPage() {
 
           <div style={{ flex: 1 }} />
 
-          <Link
-            href="/"
-            className="btn btn-soft cs"
-            style={{ color: "var(--accent-rose)" }}
-          >
-            Request refund
-          </Link>
+          {(data.claims ?? [])[0] && (
+            <ClaimStatusCard
+              claim={data.claims[0]}
+              onOpenOrder={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            />
+          )}
+          {delivered && !(data.claims ?? []).length && (
+            <button
+              className="btn btn-soft cs btn-sm"
+              style={{ width: "100%", height: "36px", color: "var(--accent-rose)" }}
+              onClick={() => setReportOpen(true)}
+            >
+              {data.claim_window_ends_at && new Date(data.claim_window_ends_at).getTime() > Date.now()
+                ? "Report a problem · 10-min window"
+                : "Report a problem"}
+            </button>
+          )}
+          {reportOpen && (
+            <ReportProblemModal
+              orderId={data.id}
+              displayId={data.display_id}
+              itemLabel={data.bracket_label ?? "Valorant account"}
+              paidCents={data.price_paid_cents}
+              windowEndsAt={data.claim_window_ends_at}
+              onClose={() => setReportOpen(false)}
+              onSubmitted={() => setReloadKey((k) => k + 1)}
+            />
+          )}
           <Link
             href="/"
             className="btn btn-dark cut"

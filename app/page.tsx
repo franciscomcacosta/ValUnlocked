@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LockLogo } from "@/components/lock-logo";
+import { ClaimOutcomeModal } from "@/components/claims";
 
 // ----- Types ----------------------------------------------------
 
@@ -195,6 +196,8 @@ export default function Page() {
         {tab === "autobuy" && <AutobuyTab me={me} isUltra={isUltra} onSub={() => setTab("subscribe")} onTopup={() => setTopup({ open: true, returnId: null })} />}
         {tab === "admin" && me.isAdmin && <AdminTab />}
       </main>
+
+      <ClaimOutcomeModal onCredited={reloadMe} />
 
       {topup.open && (
         <TopupModal
@@ -3409,12 +3412,57 @@ function TopupModal({
 // ================================================================
 
 function AdminTab() {
+  const [hook, setHook] = useState<{ configured?: boolean; url?: string; events?: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(() => {
+    fetch("/api/admin/qvsp-webhook")
+      .then((r) => r.json())
+      .then((d) => {
+        const b = (d?.body ?? {}) as { configured?: boolean; webhook_url?: string; events?: string[] };
+        setHook({ configured: b.configured, url: b.webhook_url ? b.webhook_url.replace(/token=[^&]+/, "token=•••") : "", events: b.events });
+      })
+      .catch(() => setHook({}));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function connect() {
+    setBusy(true); setMsg("");
+    try {
+      const d = await fetch("/api/admin/qvsp-webhook", { method: "POST" }).then((r) => r.json());
+      setMsg(d.ok ? `Connected. Test event: ${d.test?.ok ? "delivered" : "sent (check staff log)"}.` : `Failed: ${d.error ?? JSON.stringify(d.set?.body ?? d).slice(0, 200)}`);
+      load();
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <section className="pn cut" style={{ height: "100%", padding: "20px 24px" }}>
-      <span className="lbl">Admin</span>
-      <p className="mut" style={{ marginTop: "8px" }}>
-        Admin controls — manage credit grants, review orders, trigger inventory sync.
-      </p>
+    <section className="pn cut" style={{ height: "100%", padding: "20px 24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div>
+        <span className="lbl">Admin</span>
+        <p className="mut" style={{ marginTop: "8px" }}>
+          Admin controls — manage credit grants, review orders, trigger inventory sync.
+        </p>
+      </div>
+      <div className="cs" style={{ maxWidth: "560px", padding: "14px 16px", background: "var(--vu-surface-alt)", display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span className="h" style={{ fontSize: "20px", flex: 1 }}>qvsp replacement webhook</span>
+          <span className={`pill ${hook?.configured ? "g" : "a"}`}>{hook === null ? "Checking…" : hook.configured ? "Connected" : "Not connected"}</span>
+        </div>
+        <span className="mut" style={{ fontSize: "13px" }}>
+          Lets qvsp tell us the moment a replacement ticket is approved or denied. A cron also re-checks open
+          tickets every few minutes, so nothing is lost if a notification is missed.
+        </span>
+        {hook?.url && <span className="mono" style={{ fontSize: "12px", wordBreak: "break-all" }}>{hook.url}</span>}
+        <button className="btn btn-dark cs" style={{ alignSelf: "flex-start" }} onClick={connect} disabled={busy}>
+          {busy ? "Connecting…" : hook?.configured ? "Reconnect + send test" : "Connect webhook"}
+        </button>
+        {msg && <span style={{ fontSize: "13px" }}>{msg}</span>}
+      </div>
     </section>
   );
 }

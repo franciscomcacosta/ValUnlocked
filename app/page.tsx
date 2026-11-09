@@ -2146,14 +2146,14 @@ type XrayItem = {
   discountPct: number;
 };
 
-type XraySort = "newest" | "cheapest" | "most_skins" | "highest_peak" | "highest_vp";
+type XraySort = "vp_value" | "cheapest" | "most_skins" | "peak_rank" | "vp_balance";
 
 const XRAY_SORTS: Array<{ k: XraySort; l: string; asc: boolean }> = [
-  { k: "newest", l: "Newest", asc: false },
+  { k: "vp_value", l: "VP value", asc: false },
   { k: "cheapest", l: "Cheapest", asc: true },
   { k: "most_skins", l: "Most skins", asc: false },
-  { k: "highest_peak", l: "Highest peak", asc: false },
-  { k: "highest_vp", l: "Highest VP", asc: false },
+  { k: "peak_rank", l: "Peak rank", asc: false },
+  { k: "vp_balance", l: "VP balance", asc: false },
 ];
 
 const XRAY_ONBOARD = [
@@ -2191,7 +2191,7 @@ function XrayInspector({ onOrders }: { onOrders: () => void }) {
   const [region, setRegion] = useState<Region>("EU");
   const [minSkins, setMinSkins] = useState<string>("0");
   const [skinSearch, setSkinSearch] = useState<string>("");
-  const [sort, setSort] = useState<XraySort>("newest");
+  const [sort, setSort] = useState<XraySort>("vp_value");
   const [asc, setAsc] = useState<boolean>(false);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: XrayItem[]; total: number; totalPages: number } | null>(null);
@@ -2376,6 +2376,7 @@ function XrayInspector({ onOrders }: { onOrders: () => void }) {
                     <th>Peak</th>
                     <th style={{ textAlign: "right" }}>Level</th>
                     <th style={{ textAlign: "right" }}>Skins</th>
+                    <th style={{ textAlign: "right" }}>VP value</th>
                     <th style={{ textAlign: "right" }}>VP</th>
                     <th style={{ textAlign: "right" }}>Price</th>
                     <th style={{ paddingRight: "16px" }} />
@@ -2403,6 +2404,7 @@ function XrayInspector({ onOrders }: { onOrders: () => void }) {
                         </td>
                         <td className="num" style={{ textAlign: "right" }}>{a.level}</td>
                         <td className="num" style={{ textAlign: "right", fontWeight: 700 }}>{a.skin_count}</td>
+                        <td className="num" style={{ textAlign: "right" }}>{a.vp_value_cents ? a.vp_value_cents.toLocaleString("en") : "—"}</td>
                         <td className="num mut" style={{ textAlign: "right" }}>{(a.vp ?? 0).toLocaleString("en")}</td>
                         <td style={{ textAlign: "right" }}>
                           <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
@@ -2499,12 +2501,9 @@ function XrayInspector({ onOrders }: { onOrders: () => void }) {
                 {[
                   { k: "Peak", v: sel.peakName ?? (titleCase(sel.peak || "") || "—"), c: rankTextColor(sel.peakName ?? sel.peak) },
                   { k: "Level", v: String(sel.level ?? "—"), c: "var(--vu-navy)" },
-                  { k: "Skins", v: String(sel.skin_count), c: "var(--vu-navy)" },
-                  {
-                    k: "VP",
-                    v: sel.vp ? `${sel.vp.toLocaleString("en")}${sel.vp_value_cents ? ` ≈€${eur(sel.vp_value_cents)}` : ""}` : "0",
-                    c: sel.vp ? "#1d4ed8" : "#8b97a5",
-                  },
+                  // qvsp's vp_value is the inventory's worth in VP (column name says cents; it isn't).
+                  { k: "VP value", v: sel.vp_value_cents ? sel.vp_value_cents.toLocaleString("en") : "—", c: "#1d4ed8" },
+                  { k: "VP balance", v: (sel.vp ?? 0).toLocaleString("en"), c: sel.vp ? "var(--vu-navy)" : "#8b97a5" },
                   { k: "Buddies", v: String(sel.buddies?.length ?? 0), c: "var(--vu-navy)" },
                   { k: "Last played", v: sel.last_played ? (/^\d{4}-/.test(sel.last_played) ? timeAgo(sel.last_played) : sel.last_played) : "—", c: "var(--vu-navy)" },
                 ].map((s) => (
@@ -2826,17 +2825,16 @@ function AutobuyManager({ me, onTopup }: { me: Me; onTopup: () => void }) {
   }
   useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Skin catalogue for "Must include" — skins currently in stock.
-  const catalogRegion = draft.region === "ANY" ? "EU" : draft.region;
+  // Skin catalogue for "Must include" — every Premium / Exclusive / Ultra
+  // skin in the game, in stock or not.
   useEffect(() => {
     let cancelled = false;
-    setCatalog(null);
-    fetch(`/api/stock/all-skins?region=${catalogRegion}`)
+    fetch("/api/stock/skin-catalog")
       .then((r) => r.json())
       .then((d) => { if (!cancelled) setCatalog(d.ok ? d.skins : []); })
       .catch(() => { if (!cancelled) setCatalog([]); });
     return () => { cancelled = true; };
-  }, [catalogRegion]);
+  }, []);
 
   // Live "matching right now" preview of the draft.
   const body = JSON.stringify(draftToBody(draft));
@@ -2913,7 +2911,7 @@ function AutobuyManager({ me, onTopup }: { me: Me; onTopup: () => void }) {
     return extra.concat(base)
       .filter((s) => !mq || s.label.toLowerCase().includes(mq))
       .sort((a, b) => Number(req.has(b.label.toLowerCase())) - Number(req.has(a.label.toLowerCase())))
-      .slice(0, 120);
+      .slice(0, 240);
   }, [catalog, draft.required_skins, mq]);
 
   function toggleMust(label: string) {

@@ -190,3 +190,35 @@ export async function lookupContentTier(
   if (!t) return { icon: null, color: null };
   return { icon: t.displayIcon, color: "#" + t.highlightColor.slice(0, 6) };
 }
+
+export type CatalogSkin = {
+  label: string;
+  icon: string | null;
+  tier: string;
+  tierColor: string | null;
+  tierIcon: string | null;
+};
+
+const TIER_ORDER_DESC: Record<string, number> = { Ultra: 5, Exclusive: 4, Premium: 3, Deluxe: 2, Select: 1 };
+
+/** Every skin in the game at or above `minTier` (default Premium), whether
+ *  or not it has ever been in stock. Sorted Ultra → Premium, then A→Z. */
+export async function listSkinCatalog(minTier: "Premium" | "Exclusive" | "Ultra" = "Premium"): Promise<CatalogSkin[]> {
+  const c = await loadCache();
+  const floor = TIER_ORDER_DESC[minTier];
+  const out: CatalogSkin[] = [];
+  for (const s of c.skinsByName.values()) {
+    const tier = s.contentTierUuid ? c.contentTiersByUuid.get(s.contentTierUuid) : null;
+    if (!tier || (TIER_ORDER_DESC[tier.devName] ?? 0) < floor) continue;
+    if (/^(standard|random favorite)/i.test(s.displayName)) continue;
+    out.push({
+      label: s.displayName,
+      icon: s.displayIcon,
+      tier: tier.devName,
+      tierColor: "#" + tier.highlightColor.slice(0, 6),
+      tierIcon: tier.displayIcon ?? null,
+    });
+  }
+  out.sort((a, b) => (TIER_ORDER_DESC[b.tier] ?? 0) - (TIER_ORDER_DESC[a.tier] ?? 0) || a.label.localeCompare(b.label));
+  return out;
+}

@@ -837,3 +837,7 @@ main > div { animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .qchip-x { width: 24px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.55; transition: opacity 140ms, background-color 140ms; }
 .qchip-x:hover { opacity: 1; background: rgba(15, 25, 35, 0.08); }
 .qchip.on .qchip-x:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* Selected X-Ray row keeps its dark fill on hover (the hover fill used to
+   win, leaving white text on light grey — looked like a ghost duplicate). */
+.tbl.click tbody tr.on:hover td { background: var(--vu-navy); color: #fff; }

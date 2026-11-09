@@ -6,7 +6,7 @@
 //   • The claim is forwarded to qvsp as a replacement ticket + video proof.
 //   • If qvsp provides a replacement account, the buyer gets THAT account.
 //   • If qvsp approves without a replacement, the buyer is refunded to
-//     credit what THEY paid (orders.price_cents, not our qvsp cost) plus a
+//     credit what THEY paid (credit + crypto, not our qvsp cost) plus a
 //     5% apology bonus.
 //   • Denied → no credit; the buyer is told and can open a Discord ticket.
 import { db } from "./supabase";

@@ -113,8 +113,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       peak_rank: stock?.peak ? titleCase(stock.peak as string) : null,
       last_played_relative: /^\d{4}-/.test(String(stock?.last_played ?? "")) ? relative(stock?.last_played as string) : (stock?.last_played as string | null) ?? null,
       delivered_at: fulfilledAt,
-      price_paid_cents: order.price_cents,
-      price_original_cents: null,
+      // Paid = credit + crypto (after sub discount); original = list price.
+      price_paid_cents: ((order.credit_used_cents as number) ?? 0) + ((order.charge_cents as number) ?? 0),
+      price_original_cents:
+        (order.price_cents as number) > ((order.credit_used_cents as number) ?? 0) + ((order.charge_cents as number) ?? 0)
+          ? order.price_cents
+          : null,
       sub_tier: sub?.tier ? TIER_NAME[sub.tier as string] ?? null : null,
       payment_method: (order.charge_cents as number) === 0 ? "credit" : "crypto",
       level: (stock?.level as number | null) ?? null,

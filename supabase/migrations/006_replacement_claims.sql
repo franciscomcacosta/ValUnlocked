@@ -4,7 +4,7 @@
 -- a qvsp replacement ticket is opened with the video as proof → qvsp
 -- approves or denies (webhook + cron poll). If qvsp supplies a
 -- replacement account the buyer gets that; otherwise an approved claim
--- refunds what the BUYER paid (price_cents) + a 5% apology bonus.
+-- refunds what the BUYER paid (credit + crypto) + a 5% apology bonus.
 
 -- qvsp's own order id, needed to open a replacement ticket.
 alter table orders add column if not exists qvsp_order_id text;
@@ -23,7 +23,7 @@ create table if not exists replacement_claims (
   qvsp_last              jsonb,
   forward_error          text,                   -- why forwarding to qvsp failed (staff follow-up)
   outcome_note           text,
-  refund_cents           integer not null,       -- = orders.price_cents (what the buyer paid)
+  refund_cents           integer not null,       -- what the buyer paid: credit_used + charge
   bonus_cents            integer not null,       -- 5% apology on top
   old_inventory_id       uuid references inventory(id),
   replaced_inventory_id  uuid references inventory(id),

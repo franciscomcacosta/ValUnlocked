@@ -24,7 +24,7 @@ const PUBLIC_COLS =
 async function ownedDeliveredOrder(userId: string, orderId: string) {
   const { data } = await db
     .from("orders")
-    .select("id, user_id, status, price_cents, fulfilled_at")
+    .select("id, user_id, status, price_cents, credit_used_cents, charge_cents, fulfilled_at")
     .eq("id", orderId)
     .maybeSingle();
   if (!data || data.user_id !== userId) return { error: "not_found" as const };
@@ -114,7 +114,9 @@ export async function POST(req: Request) {
     if (!videoPath.startsWith(`${order.id}/`)) return Response.json({ error: "video_required" }, { status: 400 });
     const details = String(body?.details ?? "").trim().slice(0, 1000) || null;
 
-    const price = order.price_cents as number;
+    // What the client actually spent: credit + crypto (after any sub
+    // discount). price_cents is the pre-discount public price.
+    const price = ((order.credit_used_cents as number) ?? 0) + ((order.charge_cents as number) ?? 0);
     const { data: claim, error } = await db
       .from("replacement_claims")
       .insert({

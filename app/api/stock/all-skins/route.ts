@@ -24,17 +24,7 @@ import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
 import { featuredPriceForUser, type SubTier } from "@/lib/pricing";
 import { lookupSkinArt, type SkinArt } from "@/lib/valorant-assets";
-
-// Minimum price floor per content tier when we don't have a hand-tuned one.
-// Mirrors FEATURED_SKINS' minPriceCents averages so the generated tiles
-// land in similar price bands to the curated ones.
-const FLOOR_BY_TIER_CENTS: Record<string, number> = {
-  Select:    599,
-  Deluxe:    799,
-  Premium:   1499,
-  Exclusive: 1699,
-  Ultra:     1799,
-};
+import { accountSignature } from "@/lib/skin-names";
 
 // Content-tier rank for sorting (higher = shown first).
 const TIER_RANK: Record<string, number> = {
@@ -96,13 +86,16 @@ export async function GET(req: Request) {
 
   // Pull all skinned, available rows for the region, paging around the
   // Supabase JS 1000-row default cap.
-  type SkinRow = { skins: string[] | null; qvsp_price_cents: number };
+  type SkinRow = {
+    skins: string[] | null; qvsp_price_cents: number; region: string; level: number | null;
+    peak: string | null; rank_normalized: string | null; vp: number | null; skin_count: number | null;
+  };
   const rows: SkinRow[] = [];
   const PAGE = 1000;
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await db
       .from("qvsp_stock")
-      .select("skins, qvsp_price_cents")
+      .select("skins, qvsp_price_cents, region, level, peak, rank_normalized, vp, skin_count")
       .eq("region", region)
       .eq("kind", "skinned")
       .is("reserved_order_id", null)
@@ -119,21 +112,24 @@ export async function GET(req: Request) {
     if (batch.length < PAGE) break;
   }
 
-  // Aggregate: skinName → { count, cheapestCents }
-  const agg = new Map<string, { count: number; cheapest: number }>();
+  // Aggregate: skinName → { distinct accounts, cheapest qvsp cost }.
+  // qvsp re-lists the same account under several ids, so count accounts
+  // by signature rather than listings.
+  const agg = new Map<string, { accounts: Set<string>; cheapest: number }>();
   for (const row of rows) {
     const skins = (row.skins ?? []) as string[];
     const price = row.qvsp_price_cents as number;
     if (!Number.isFinite(price)) continue;
+    const sig = accountSignature(row);
     for (const raw of skins) {
       const name = normalizeSkinName(raw);
       if (!name) continue;
       const cur = agg.get(name);
       if (cur) {
-        cur.count += 1;
+        cur.accounts.add(sig);
         if (price < cur.cheapest) cur.cheapest = price;
       } else {
-        agg.set(name, { count: 1, cheapest: price });
+        agg.set(name, { accounts: new Set([sig]), cheapest: price });
       }
     }
   }
@@ -147,14 +143,16 @@ export async function GET(req: Request) {
   const results = [];
   for (const { name, art } of artLookups) {
     if (!art.icon || !art.tierName) continue;   // only named-tier skins
+    if ((TIER_RANK[art.tierName] ?? 0) < TIER_RANK.Premium) continue;   // Premium / Exclusive / Ultra only
     const bucket = agg.get(name)!;
-    const floor = FLOOR_BY_TIER_CENTS[art.tierName] ?? 999;
-    const p = featuredPriceForUser(bucket.cheapest, floor, tier);
+    // Dynamic: priced off the cheapest account in stock with this skin
+    // (cost + flat markup, with the margin safety floor) — no fixed tier floor.
+    const p = featuredPriceForUser(bucket.cheapest, 0, tier);
     results.push({
       key: name,
       label: name,
       weapon: weaponFor(name),
-      available: bucket.count,
+      available: bucket.accounts.size,
       cheapestQvspCents: bucket.cheapest,
       publicCents: p.publicCents,
       finalCents: p.finalCents,

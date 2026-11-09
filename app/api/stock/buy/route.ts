@@ -6,6 +6,8 @@
 // nowpayments invoice. IPN handler calls qvsp POST /orders at payment-final.
 import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
+import { normalizeSkinName, skinVariants } from "@/lib/skin-names";
+import { lookupSkinArt } from "@/lib/valorant-assets";
 import {
   SKIN_BRACKETS,
   priceForBracket,
@@ -131,29 +133,35 @@ async function handleBracketBuy(opts: { region: string; bracketName: BracketName
 // ─── Featured skin (cheapest with that skin) ───────────────────
 
 async function handleFeaturedSkinBuy(opts: { region: string; skinLabel: string; useCredit: boolean; userId: string; tier: SubTier | null }): Promise<Response> {
-  const skin = FEATURED_SKINS.find((s) => s.label === opts.skinLabel) as FeaturedSkin | undefined;
-  if (!skin) return Response.json({ error: "invalid_skin" }, { status: 400 });
+  // Any Premium / Exclusive / Ultra skin can be bought, not just a fixed list.
+  const label = normalizeSkinName(opts.skinLabel);
+  const art = label ? await lookupSkinArt(label) : null;
+  if (!art?.tierName || !["Premium", "Exclusive", "Ultra"].includes(art.tierName)) {
+    return Response.json({ error: "invalid_skin" }, { status: 400 });
+  }
 
-  // Grab the CHEAPEST available qvsp rows that contain this skin. Reserve
-  // in cheapest-first order so we always lock the one the display price
-  // was based on.
+  // Grab the CHEAPEST available qvsp rows that contain this skin (qvsp stores
+  // "Name (N Levels)", so match every spelling). Reserve cheapest-first so we
+  // lock the account the displayed price was based on.
   const { data: candidates, error: cErr } = await db
     .from("qvsp_stock")
     .select("qvsp_id, qvsp_price_cents")
     .eq("region", opts.region)
     .eq("kind", "skinned")
-    .overlaps("skins", skin.matchAny)
+    .overlaps("skins", skinVariants(label))
     .is("reserved_order_id", null)
     .is("removed_at", null)
     .eq("claimed", false)
+    .lte("public_at", new Date().toISOString())
     .order("qvsp_price_cents", { ascending: true })
     .limit(10);
   if (cErr) return Response.json({ error: cErr.message }, { status: 500 });
   if (!candidates?.length) return Response.json({ error: "skin_unavailable" }, { status: 409 });
 
+  // Same dynamic price as the named-drops grid (/api/stock/all-skins).
   const cheapest = candidates[0].qvsp_price_cents as number;
-  const pricing = featuredPriceForUser(cheapest, skin.minPriceCents, opts.tier);
-  const productId = await resolveFeaturedSkinProductId(skin.label);
+  const pricing = featuredPriceForUser(cheapest, 0, opts.tier);
+  const productId = await resolveFeaturedSkinProductId(label);
 
   return reserveAndInvoice({
     userId: opts.userId,
@@ -163,7 +171,7 @@ async function handleFeaturedSkinBuy(opts: { region: string; skinLabel: string; 
     publicCents: pricing.publicCents,
     finalCents: pricing.finalCents,
     useCredit: opts.useCredit,
-    description: `Valorant account · guaranteed ${skin.label} · ${opts.region}`,
+    description: `Valorant account · guaranteed ${label} · ${opts.region}`,
   });
 }
 

@@ -14,6 +14,7 @@ import { db } from "@/lib/supabase";
 import { rankIndex } from "@/lib/qvsp";
 import { xrayPriceForUltra, type SubTier } from "@/lib/pricing";
 import { lookupRank } from "@/lib/valorant-assets";
+import { skinKey, accountSignature } from "@/lib/skin-names";
 
 export async function POST(req: Request) {
   const session = sessionFromRequest(req);
@@ -78,6 +79,7 @@ export async function POST(req: Request) {
   const peakCeil = maxPeak ? rankIndex(maxPeak) : Infinity;
   let count = 0;
   const hits: Array<{ row: Row; finalCents: number }> = [];
+  const seen = new Map<string, { row: Row; finalCents: number }>();
   for (const r of rows) {
     if (maxPriceCents > 0) {
       const p = xrayPriceForUltra(r.qvsp_price_cents);
@@ -86,26 +88,42 @@ export async function POST(req: Request) {
     if (peakFloor > 0 && rankIndex(r.peak ?? "") < peakFloor) continue;
     if (rankIndex(r.peak ?? "") > peakCeil) continue;
     if (requiredSkins.length > 0) {
-      const have = new Set((r.skins ?? []).map((s) => s.toLowerCase()));
-      let hasAll = true;
-      for (const req of requiredSkins) {
-        if (!have.has(req.toLowerCase())) { hasAll = false; break; }
-      }
-      if (!hasAll) continue;
+      // qvsp names carry "(N Levels)" — compare on the bare skin name.
+      const have = new Set((r.skins ?? []).map(skinKey));
+      if (!requiredSkins.every((req) => have.has(skinKey(req)))) continue;
     }
-    count++;
-    hits.push({ row: r, finalCents: xrayPriceForUltra(r.qvsp_price_cents).finalCents });
+    // qvsp re-lists the same account under several ids: keep one per
+    // account (the cheapest listing).
+    const sig = accountSignature(r);
+    const finalCents = xrayPriceForUltra(r.qvsp_price_cents).finalCents;
+    const prev = seen.get(sig);
+    if (prev) {
+      if (finalCents < prev.finalCents) { prev.row = r; prev.finalCents = finalCents; }
+      continue;
+    }
+    const hit = { row: r, finalCents };
+    seen.set(sig, hit);
+    hits.push(hit);
   }
+  count = hits.length;
 
-  // Total skinned stock (all regions) for the "N / total" readout.
-  const { count: total } = await db
-    .from("qvsp_stock")
-    .select("qvsp_id", { count: "exact", head: true })
-    .eq("kind", "skinned")
-    .is("reserved_order_id", null)
-    .is("removed_at", null)
-    .eq("claimed", false)
-    .lte("public_at", new Date().toISOString());
+  // Total distinct skinned accounts (all regions) for the "N / total"
+  // readout — deduped the same way, on cheap columns only.
+  const totalSigs = new Set<string>();
+  for (let offset = 0; ; offset += PAGE) {
+    const { data } = await db
+      .from("qvsp_stock")
+      .select("region, level, peak, rank_normalized, vp, skin_count")
+      .eq("kind", "skinned")
+      .is("reserved_order_id", null)
+      .is("removed_at", null)
+      .eq("claimed", false)
+      .lte("public_at", new Date().toISOString())
+      .range(offset, offset + PAGE - 1);
+    for (const r of data ?? []) totalSigs.add(accountSignature({ ...r, skins: null }));
+    if (!data || data.length < PAGE) break;
+  }
+  const total = totalSigs.size;
 
   hits.sort((a, b) => a.finalCents - b.finalCents);
   const top = await Promise.all(
@@ -125,5 +143,5 @@ export async function POST(req: Request) {
     })
   );
 
-  return Response.json({ ok: true, matching: count, scanned: rows.length, total: total ?? rows.length, matches: top });
+  return Response.json({ ok: true, matching: count, scanned: rows.length, total, matches: top });
 }

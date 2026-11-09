@@ -287,33 +287,37 @@ input, select, textarea {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 10px 16px;
-  /* Solid near-black bar that bleeds to the clipped edges — matches
-     the designer's ELDERFLAME strip. No transparency so the gradient
-     above doesn't bleed through and narrow the stripe visually. */
-  background: #0b1420;
-  border-top: 1px solid color-mix(in srgb, var(--tc, #ef4444) 30%, transparent);
-  /* Negative horizontal margin pulls the stripe past the parent's
-     internal padding so it touches the tile's clip-path edges. */
+  padding: 4px 8px;
+  background: rgba(15, 25, 35, 0.72);
+}
+/* Edge-to-edge solid strip used on SkinTile only (matches the
+   designer's black ELDERFLAME bar). Opt-in via extra class so the
+   softer bracket strip keeps its old translucent look. */
+.strip.skin-strip {
+  padding: 8px 12px;
+  background: #0a1018;
+  border-top: 1px solid color-mix(in srgb, var(--tc, #ef4444) 35%, transparent);
   margin: 0 -1px -1px;
 }
-/* Tier ribbon tag in the top-left, mirrors the designer's "FRENZY" chip.
-   Uses the tier accent color for the fill so each tier feels distinct. */
+/* Corner tier ribbon (SkinTile) — mirrors the designer's "FRENZY" chip. */
 .tier-ribbon {
   position: absolute;
   top: 0;
   left: 0;
-  padding: 6px 14px 6px 10px;
-  background: color-mix(in srgb, var(--tc, #ef4444) 85%, #0b1420);
+  padding: 5px 14px 5px 10px;
+  background: color-mix(in srgb, var(--tc, #ef4444) 88%, #0b1420);
   color: #fff;
   font-family: var(--f-display, "Inter"), sans-serif;
   font-weight: 800;
-  font-size: 11px;
+  font-size: 10.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   z-index: 2;
-  clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
-  box-shadow: 0 0 20px color-mix(in srgb, var(--tc, #ef4444) 50%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--tc, #ef4444) 45%, transparent);
 }
 
 /* === Agent avatar === */

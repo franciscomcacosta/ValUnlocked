@@ -1227,19 +1227,19 @@ function BracketTile({
       }}
       aria-label={`${row.label} skins`}
     >
-      <span className="glow" style={{ opacity: Math.max(0.4, vis.intensity * 0.95) }} />
-      {/* Corner tier ribbon — mirrors the designer's "FRENZY" tag. */}
-      <span className="tier-ribbon">{vis.label}</span>
+      <span className="glow" style={{ opacity: Math.max(0.35, vis.intensity * 0.85) }} />
       <span
         style={{
           position: "relative",
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: "space-between",
           alignItems: "center",
           padding: "10px 12px 0",
-          minHeight: "32px",
         }}
       >
+        <span className="bc" style={{ fontSize: "13px", fontWeight: 600, color: "var(--vu-ivory-dim)" }}>
+          Random account
+        </span>
         <span className="rg">{region}</span>
       </span>
       <span
@@ -1250,32 +1250,23 @@ function BracketTile({
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          gap: "4px",
-          padding: "8px 8px 12px",
+          gap: "2px",
         }}
       >
-        <span
-          className="h num"
-          style={{
-            fontSize: "56px",
-            color: "#fff",
-            lineHeight: 1,
-            textShadow: `0 2px 24px ${tc}55, 0 0 1px ${tc}`,
-          }}
-        >
+        <span className="h num" style={{ fontSize: "52px", color: "#fff", lineHeight: 1 }}>
           {row.label}
         </span>
         <span
           className="bc"
           style={{
-            fontSize: "11px",
-            fontWeight: 800,
-            color: "var(--vu-ivory-dim)",
-            letterSpacing: "0.22em",
-            textTransform: "uppercase",
+            fontSize: "13px",
+            fontWeight: 700,
+            color: tc,
+            letterSpacing: "0.1em",
+            textShadow: `0 0 12px ${tc}aa`,
           }}
         >
-          Random account
+          {vis.label} · Skins
         </span>
         {row.label === "1-25" && (
           <span
@@ -1285,7 +1276,7 @@ function BracketTile({
               fontWeight: 700,
               color: "var(--accent-success)",
               letterSpacing: "0.12em",
-              marginTop: "2px",
+              marginTop: "4px",
             }}
           >
             ★ Always includes a shop skin
@@ -1297,8 +1288,8 @@ function BracketTile({
           position: "relative",
           display: "flex",
           justifyContent: "center",
-          gap: "16px",
-          padding: "0 0 10px",
+          gap: "14px",
+          padding: "0 0 8px",
           fontSize: "12px",
           color: "var(--vu-ivory-dim)",
         }}
@@ -1315,11 +1306,8 @@ function BracketTile({
         <span>Delivery <b style={{ color: "#86efac" }}>Instant</b></span>
       </span>
       <span className="strip">
-        <span className="bc" style={{ fontSize: "10px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.18em" }}>
-          FROM
-        </span>
         <span className="num" style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-          <span className="bc" style={{ fontWeight: 800, fontSize: "22px", color: "#fff" }}>
+          <span className="bc" style={{ fontWeight: 700, fontSize: "22px", color: "#fff" }}>
             €{eur(row.price.finalCents)}
           </span>
           {hasDiscount && (
@@ -1327,10 +1315,10 @@ function BracketTile({
               €{eur(row.price.publicCents)}
             </span>
           )}
-          {hasDiscount && !soldOut && (
-            <span className="stk ok" style={{ marginLeft: "6px" }}>−{Math.round(row.price.discountPct * 100)}%</span>
-          )}
         </span>
+        {hasDiscount && !soldOut && (
+          <span className="stk ok">−{Math.round(row.price.discountPct * 100)}%</span>
+        )}
       </span>
     </button>
   );
@@ -1365,28 +1353,31 @@ function SkinTile({
       aria-label={`${row.label} ${row.weapon}, from €${eur(row.finalCents)}`}
     >
       <span className="glow" />
-      <span
-        style={{
-          position: "relative",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "8px 10px 0",
-        }}
-      >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+      {/* Tier ribbon top-left (ULTRA / EXCLUSIVE / PREMIUM / SELECT) +
+          region tag top-right, mirrors the designer's layout. */}
+      {row.tier && (
+        <span className="tier-ribbon">
           {row.tierIcon && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={row.tierIcon}
               alt=""
-              style={{ width: "14px", height: "14px", objectFit: "contain" }}
+              style={{ width: "12px", height: "12px", objectFit: "contain" }}
             />
           )}
-          <span className="bc" style={{ fontSize: "12px", fontWeight: 600, color: tc }}>
-            {row.tier ?? row.weapon}
-          </span>
+          {row.tier}
         </span>
+      )}
+      <span
+        style={{
+          position: "relative",
+          display: "flex",
+          justifyContent: "flex-end",
+          alignItems: "center",
+          padding: "8px 10px 0",
+          minHeight: "28px",
+        }}
+      >
         <span className="rg">{region}</span>
       </span>
       <span
@@ -1442,42 +1433,41 @@ function SkinTile({
         </span>
         <span>Instant</span>
       </span>
-      <span className="strip">
-        <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <span className="bc" style={{ fontSize: "11px", color: "var(--vu-ivory-dim)", lineHeight: 1.1 }}>
+      <span className="strip skin-strip">
+        <span style={{ minWidth: 0, display: "flex", flexDirection: "column", lineHeight: 1.05 }}>
+          <span className="bc" style={{ fontSize: "9.5px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.16em", textTransform: "uppercase" }}>
             {row.weapon}
           </span>
           <span
             className="bc"
             style={{
-              fontWeight: 700,
-              fontSize: "16px",
+              fontWeight: 800,
+              fontSize: "14px",
               color: "#fff",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
-              lineHeight: 1.1,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
             }}
           >
-            {/* Strip weapon from label so "Phaseguard Ghost" → "Phaseguard"
-                under the "GHOST" weapon row above. Keeps the big strip
-                readable instead of "GHOST / PHASEGUARD GHOST". */}
+            {/* Strip weapon from label so "Phaseguard Ghost" → "Phaseguard". */}
             {row.label.endsWith(` ${row.weapon}`)
               ? row.label.slice(0, -row.weapon.length - 1)
               : row.label}
           </span>
         </span>
-        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.05 }}>
           {soldOut ? (
-            <span className="bc" style={{ fontSize: "12px", color: "#f87171", fontWeight: 700, lineHeight: 1.1 }}>
+            <span className="bc" style={{ fontSize: "12px", color: "#f87171", fontWeight: 700 }}>
               Sold out
             </span>
           ) : (
             <>
-              <span className="bc" style={{ fontSize: "11px", color: "var(--vu-ivory-dim)", lineHeight: 1.1 }}>
-                from
+              <span className="bc" style={{ fontSize: "9.5px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.16em" }}>
+                FROM
               </span>
-              <span className="bc num" style={{ fontWeight: 700, fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
+              <span className="bc num" style={{ fontWeight: 800, fontSize: "18px", color: "#fff" }}>
                 €{eur(row.finalCents)}
               </span>
             </>

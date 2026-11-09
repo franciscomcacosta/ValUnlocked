@@ -62,7 +62,7 @@ interface ExtractBody {
   password: string;
 }
 
-app.get("/health", async () => ({ ok: true, version: "2.0.0" }));
+app.get("/health", async () => ({ ok: true, version: "2.0.1" }));
 
 // ─── /verify: synchronous — returns the verdict inline. ──────────────
 app.post<{ Body: ExtractBody }>("/verify", async (req, reply) => {
@@ -153,25 +153,60 @@ async function verify(order_id: string, login: string, password: string): Promis
     });
     page = await ctx.newPage();
 
-    await page.goto("https://merch.riotgames.com/en-us/", { waitUntil: "domcontentloaded" });
+    // Hit the merch sign-in page directly. It kicks us straight to
+    // auth.riotgames.com's login (which is what we want), and if login
+    // works it brings us back here — a clean success signal.
+    await page.goto("https://merch.riotgames.com/en-us/account/sign-in", {
+      waitUntil: "domcontentloaded",
+    });
 
+    // In case we didn't redirect automatically, click any sign-in link.
     await page
       .getByRole("link", { name: /sign in/i })
       .first()
-      .click({ timeout: 10_000 })
+      .click({ timeout: 5_000 })
       .catch(() => {});
 
-    await page.waitForURL(/auth\.riotgames\.com/, { timeout: 20_000 });
+    await page.waitForURL(/auth\.riotgames\.com/, { timeout: 25_000 }).catch(() => {});
 
     if (await page.$('iframe[src*="hcaptcha.com"]')) {
-      // No login attempt happened — we don't ship a "proof" video of a
-      // captcha challenge because nothing meaningful was tried.
+      // No login attempt happened — nothing to prove with a video.
       return { ok: false, reason: "captcha_present" };
     }
 
-    await page.fill('input[name="username"]', login);
-    await page.fill('input[name="password"]', password);
-    await page.click('button[type="submit"]');
+    // Find the username and password fields. Riot has rotated the exact
+    // name attributes over the years; try several selectors before giving
+    // up. The last one (type-based) is a bet of last resort.
+    const usernameSel = await firstVisibleSelector(page, [
+      'input[name="username"]',
+      'input[autocomplete="username"]',
+      'input[placeholder*="sername" i]',
+      'input[type="text"]',
+    ]);
+    if (!usernameSel) {
+      return { ok: false, reason: "worker_error", detail: "username field not found — selector drift" };
+    }
+    await page.fill(usernameSel, login);
+
+    const passwordSel = await firstVisibleSelector(page, [
+      'input[name="password"]',
+      'input[autocomplete="current-password"]',
+      'input[type="password"]',
+    ]);
+    if (!passwordSel) {
+      return { ok: false, reason: "worker_error", detail: "password field not found — selector drift" };
+    }
+    await page.fill(passwordSel, password);
+
+    // Submit — either click the button or press Enter. Enter is the
+    // more robust bet since the sign-in button's text/role varies.
+    const submitted = await page
+      .locator('button[type="submit"]')
+      .first()
+      .click({ timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!submitted) await page.keyboard.press("Enter");
 
     const outcome = await Promise.race([
       page.waitForURL(/merch\.riotgames\.com/, { timeout: 25_000 }).then(() => "ok" as const),
@@ -225,6 +260,24 @@ async function verify(order_id: string, login: string, password: string): Promis
     }
     await browser.close().catch(() => {});
   }
+}
+
+/** Return the first selector in the list that resolves to a visible
+ *  element, waiting up to 20s for the FIRST one to appear. Later ones
+ *  are checked with a tight timeout — they're fallbacks for when Riot
+ *  has rotated attribute names. */
+async function firstVisibleSelector(page: Page, selectors: string[]): Promise<string | null> {
+  for (let i = 0; i < selectors.length; i++) {
+    const sel = selectors[i];
+    try {
+      await page.waitForSelector(sel, {
+        state: "visible",
+        timeout: i === 0 ? 20_000 : 1_500,
+      });
+      return sel;
+    } catch { /* try the next one */ }
+  }
+  return null;
 }
 
 /** Close the page + context and return the finalized video path (or null). */

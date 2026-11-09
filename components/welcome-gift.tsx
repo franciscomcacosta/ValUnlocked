@@ -1,12 +1,18 @@
 "use client";
 
-// Standard welcome gift — a banner + claim pop-up for the free 26–50 skins
-// account. Only renders when /api/welcome-account says it's claimable.
-// Opens automatically from the DM link (/?claim=welcome).
+// Free-account gifts — a floating card + claim pop-up. Covers the Standard
+// welcome gift (26–50) and the /trial gift (1–25). Only renders when
+// /api/welcome-account has one to claim. Opens automatically from the DM
+// link (/?claim=…).
 
 import { useCallback, useEffect, useState } from "react";
 
-type Status = { state: "none" | "available" | "claimed"; orderId?: string; stock?: Record<string, number> };
+type Gift = { kind: "standard_welcome" | "trial"; label: string; worthCents: number };
+type Status = { gift: Gift | null; pending: number; stock: Record<string, number> };
+const COPY: Record<Gift["kind"], string> = {
+  standard_welcome: "Included with your first Standard month",
+  trial: "Included with your free Standard trial",
+};
 const REGIONS: Array<[string, string]> = [["EU", "Europe"], ["NA", "North America"], ["AP", "Asia Pacific"], ["KR", "Korea"], ["LATAM", "Latin America"], ["BR", "Brazil"]];
 const GOLD = "#ffd400";
 
@@ -24,23 +30,28 @@ export function WelcomeGift({ active }: { active: boolean }) {
       .then((d: Status | null) => {
         if (!d) return;
         setSt(d);
-        if (d.state === "available" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("claim") === "welcome") setOpen(true);
+        if (d.gift && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("claim")) setOpen(true);
       })
       .catch(() => {});
   }, []);
   useEffect(() => { if (active) load(); }, [active, load]);
+  // After a successful claim, closing the pop-up refreshes — shows the next
+  // gift if they have two (trial + Standard welcome), or hides the card.
+  useEffect(() => {
+    if (!open && done) { setDone(null); setRegion(null); load(); }
+  }, [open, done, load]);
 
   async function claim() {
-    if (!region) return;
+    if (!region || !st?.gift) return;
     setBusy(true); setErr("");
     try {
-      const r = await fetch("/api/welcome-account", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ region }) });
+      const r = await fetch("/api/welcome-account", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: st.gift.kind, region }) });
       const d = await r.json();
       if (!r.ok || !d.ok) {
         throw new Error(
-          d.error === "out_of_stock" ? "That region just ran out of 26–50 accounts. Pick another one."
+          d.error === "out_of_stock" ? `That region just ran out of ${st.gift.label} accounts. Pick another one.`
           : d.error === "already_claimed" ? "You've already claimed your free account."
-          : d.error === "not_eligible" ? "The free account comes with your first paid Standard month."
+          : d.error === "not_eligible" ? "This free account isn't available on your account."
           : "Something went wrong. Try again in a minute."
         );
       }
@@ -53,8 +64,10 @@ export function WelcomeGift({ active }: { active: boolean }) {
     }
   }
 
-  if (!st || st.state !== "available") return null;
-  const stock = st.stock ?? {};
+  if (!st?.gift && !done) return null;
+  const gift = st?.gift ?? { kind: "trial" as const, label: "", worthCents: 0 };
+  const stock = st?.stock ?? {};
+  const worth = `€${(gift.worthCents / 100).toFixed(2)}`;
 
   return (
     <>
@@ -66,9 +79,9 @@ export function WelcomeGift({ active }: { active: boolean }) {
         <span style={{ fontSize: "26px" }} aria-hidden="true">🎁</span>
         <span style={{ flex: 1, display: "flex", flexDirection: "column" }}>
           <span className="bc" style={{ fontSize: "18px", fontWeight: 700 }}>
-            Your <span style={{ color: GOLD }}>free 26–50 skins account</span> is waiting
+            Your <span style={{ color: GOLD }}>free {gift.label} account</span> is waiting
           </span>
-          <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>Included with your first Standard month · pick a region and it's delivered instantly</span>
+          <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>{COPY[gift.kind]} · pick a region and it's delivered instantly</span>
         </span>
         <span className="btn btn-gold cs btn-sm">Claim it</span>
       </button>
@@ -82,7 +95,7 @@ export function WelcomeGift({ active }: { active: boolean }) {
             <div style={{ background: "var(--vu-navy)", color: "#fff", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px", borderBottom: `3px solid ${GOLD}` }}>
               <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                 <span className="h" style={{ fontSize: "26px" }}>Free <span style={{ color: GOLD }}>account</span></span>
-                <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>Random 26–50 skins account · worth €6.99 · yours free with Standard</span>
+                <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>Random {gift.label} account · worth {worth} · {gift.kind === "trial" ? "free with your trial" : "yours free with Standard"}</span>
               </div>
               <button className="ico" style={{ color: "var(--vu-ivory-dim)" }} aria-label="Close" onClick={() => !busy && setOpen(false)}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>

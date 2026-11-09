@@ -257,7 +257,9 @@ async function reserveEquivalent(orderId: string, gone: StockRow): Promise<Stock
   if (prod.slug.startsWith("qvsp-skin-")) {
     q = q.overlaps("skins", skinVariants(prod.name));
   } else {
-    const bracket = SKIN_BRACKETS.find((b) => prod.slug === `qvsp-${b.name}` || prod.slug === `qvsp-welcome-${b.name}`);
+    const bracket = SKIN_BRACKETS.find(
+      (b) => prod.slug === `qvsp-${b.name}` || (/^qvsp-(welcome|gift-[a-z_]+)-/.test(prod.slug) && prod.slug.endsWith(`-${b.name}`))
+    );
     if (!bracket) return null;
     // Stay within what the bracket was priced to cover.
     q = q.gte("skin_count", bracket.minSkins).lte("skin_count", bracket.maxSkins)

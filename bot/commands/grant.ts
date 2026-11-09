@@ -54,7 +54,12 @@ export async function ensureUser(discordId: string, username: string): Promise<s
 
 /** Give a plan for N days. Same tier → extends from the current end;
  *  different tier → switches and keeps whichever end date is later. */
-export async function applyPlan(userId: string, tier: SubTier, days: number): Promise<{ end: Date; previousTier: SubTier | null }> {
+export async function applyPlan(
+  userId: string,
+  tier: SubTier,
+  days: number,
+  opts: { trial?: boolean } = {}
+): Promise<{ end: Date; previousTier: SubTier | null; subscriptionId: string }> {
   const { data: current } = await db
     .from("subscriptions")
     .select("id, tier, period_end")
@@ -74,16 +79,17 @@ export async function applyPlan(userId: string, tier: SubTier, days: number): Pr
     period_end: end.toISOString(),
     grace_until: new Date(end.getTime() + SUB_GRACE_HOURS * 3_600_000).toISOString(),
     current_invoice_id: null,
-    reminded_7d: false,
-    reminded_3d: false,
+    // Trials only get the last-day "keep it for €9.99" reminder.
+    reminded_7d: !!opts.trial,
+    reminded_3d: !!opts.trial,
     reminded_1d: false,
     cancelled_at: null,
   };
   const res = current
-    ? await db.from("subscriptions").update(fields).eq("id", current.id)
-    : await db.from("subscriptions").insert({ user_id: userId, ...fields });
+    ? await db.from("subscriptions").update(fields).eq("id", current.id).select("id").single()
+    : await db.from("subscriptions").insert({ user_id: userId, ...fields }).select("id").single();
   if (res.error) throw res.error;
-  return { end, previousTier: (current?.tier as SubTier | undefined) ?? null };
+  return { end, previousTier: (current?.tier as SubTier | undefined) ?? null, subscriptionId: res.data.id as string };
 }
 
 export async function execute(interaction: ChatInputCommandInteraction) {

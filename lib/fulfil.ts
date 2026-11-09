@@ -5,8 +5,8 @@
 import { db } from "./supabase";
 import { notifyDiscordUser } from "./discord";
 import { buyAccount, QvspApiError, type QvspKind, type QvspOrder } from "./qvsp";
-import { encrypt } from "./crypto";
-import { SKIN_BRACKETS, type SubTier } from "./pricing";
+import { encrypt, decrypt } from "./crypto";
+import { SKIN_BRACKETS } from "./pricing";
 import { skinVariants } from "./skin-names";
 import { logToStaff } from "./discord";
 
@@ -37,10 +37,29 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
       .update({ status: "fulfilled", fulfilled_at: new Date().toISOString() })
       .eq("id", orderId);
     if (user?.discord_id) {
+      // Inline login + password in the DM so the buyer can grab them
+      // straight from Discord. Full details (incl. recovery email) stay
+      // on the order page.
+      const { data: inv } = await db
+        .from("inventory")
+        .select("login_enc, password_enc")
+        .eq("id", order.inventory_id)
+        .maybeSingle();
+      let credsBlock = "";
+      if (inv?.login_enc && inv?.password_enc) {
+        try {
+          credsBlock =
+            `\n**Login:** \`${decrypt(inv.login_enc)}\`\n` +
+            `**Password:** \`${decrypt(inv.password_enc)}\`\n`;
+        } catch (e) {
+          console.error("[fulfil] decrypt failed", e);
+        }
+      }
       await notifyDiscordUser(
         user.discord_id,
-        `✅ Your order for **${product?.name ?? "your account"}** is ready.\n` +
-          `View credentials: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
+        `✅ Your order for **${product?.name ?? "your account"}** is ready.` +
+          credsBlock +
+          `\nFull details (including recovery email): ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
           `Change the account and email passwords on first login.`
       ).catch((e) => console.error("[fulfil] DM failed", e));
     }
@@ -168,45 +187,39 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     .eq("id", orderId);
 
   if (user?.discord_id) {
+    // Inline creds + 10-min test window + email-coming-soon note. The
+    // extractor callback will DM a second time with the recovery email.
     await notifyDiscordUser(
       user.discord_id,
-      `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n` +
-        `View credentials: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n\n` +
+      `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n\n` +
+        `**Login:** \`${creds.login}\`\n` +
+        `**Password:** \`${creds.password}\`\n\n` +
         `⏱️ **Test it now — you have 10 minutes.** Log in, and if anything's wrong (wrong password, banned, asks for a code…) ` +
         `press **"No, there's a problem"** on the order page to get a replacement or your money back.\n` +
+        `⏳ Pulling your recovery email now — I'll DM it to you in about a minute.\n` +
+        `Full details: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
         `Change the account and email passwords on first login.`
     ).catch((e) => console.error("[fulfil] DM failed", e));
   }
 
-  // Fire-and-forget email extraction for Premium+ subscribers. Worker will
-  // POST back to /api/worker/callback with the extracted email or a failure.
-  // Standard users don't get auto-extraction — they have to figure it out
-  // themselves, which is a feature not a bug (keeps the method a sub perk).
-  void maybeDispatchEmailExtraction(orderId, order.user_id, creds.login, creds.password);
+  // Fire-and-forget email extraction for EVERY buyer (no tier gate).
+  // Worker POSTs back to /api/worker/callback with the extracted email
+  // or a failure. On success, the callback DMs the buyer again with the
+  // email + a reminder of which login it's for.
+  void dispatchEmailExtraction(orderId, creds.login, creds.password);
 
   return true;
 }
 
-/** Only fires if user is Premium or Ultra AND the worker URL is configured. */
-async function maybeDispatchEmailExtraction(
+/** Fire the Fly worker to log in and extract the Riot-recovery email. */
+async function dispatchEmailExtraction(
   orderId: string,
-  userId: string,
   login: string,
   password: string
 ): Promise<void> {
   const workerUrl = process.env.EXTRACTOR_WORKER_URL;
   const workerSecret = process.env.EXTRACTOR_WORKER_SECRET;
   if (!workerUrl || !workerSecret) return; // feature disabled
-
-  // Gate by sub tier.
-  const { data: sub } = await db
-    .from("subscriptions")
-    .select("tier")
-    .eq("user_id", userId)
-    .in("status", ["active", "grace"])
-    .maybeSingle();
-  const tier = (sub?.tier ?? null) as SubTier | null;
-  if (tier !== "premium" && tier !== "ultra") return;
 
   try {
     const res = await fetch(`${workerUrl.replace(/\/$/, "")}/extract`, {

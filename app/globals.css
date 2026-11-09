@@ -827,3 +827,6 @@ main > div { animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 /* Named-drops grid already staggers its wrappers (skin-rise); don't pop
    the tile inside a second time. */
 .skin-grid-rise .tile { animation: none; }
+/* Header credit chip → top-up */
+.credit-chip { transition: background-color 140ms; }
+.credit-chip:hover { background: rgba(255,212,0,0.22) !important; }

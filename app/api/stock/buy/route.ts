@@ -20,7 +20,7 @@ import { createInvoice } from "@/lib/nowpayments";
 
 export const runtime = "nodejs";
 
-const REGIONS = new Set(["EU", "AP", "KR", "LATAM", "BR"]);
+const REGIONS = new Set(["EU", "NA", "AP", "KR", "LATAM", "BR"]);
 
 export async function POST(req: Request) {
   const session = sessionFromRequest(req);

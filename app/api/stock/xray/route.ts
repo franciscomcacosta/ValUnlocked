@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const PAGE_SIZE = 50;
-const REGIONS = new Set(["EU", "AP", "KR", "LATAM", "BR"]);
+const REGIONS = new Set(["EU", "NA", "AP", "KR", "LATAM", "BR"]);
 
 export async function GET(req: Request) {
   const session = sessionFromRequest(req);

@@ -255,3 +255,26 @@ export function featuredPriceForUser(cheapestQvspCents: number, minPriceCents: n
   const final = Math.floor(publicCents * (1 - pct));
   return { publicCents, finalCents: final, savingsCents: publicCents - final, discountPct: pct };
 }
+
+// ---- Credit top-ups ------------------------------------------------------
+// Five fixed amounts, each paid via a NowPayments invoice. Every top-up
+// adds a flat bonus on top of what was paid.
+export const TOPUP_BONUS_PCT = 0.05;
+
+export type TopupTierId = "t10" | "t25" | "t50" | "t100" | "t250";
+
+export interface TopupTier {
+  id: TopupTierId;
+  payCents: number;
+  bonusCents: number;
+}
+
+export const TOPUP_TIERS: TopupTier[] = [1000, 2500, 5000, 10000, 25000].map((payCents) => ({
+  id: `t${payCents / 100}` as TopupTierId,
+  payCents,
+  bonusCents: Math.round(payCents * TOPUP_BONUS_PCT),
+}));
+
+export function topupTier(id: string): TopupTier | null {
+  return TOPUP_TIERS.find((t) => t.id === id) ?? null;
+}

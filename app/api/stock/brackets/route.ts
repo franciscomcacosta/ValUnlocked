@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 type Row = { region: string; skin_count: number; qvsp_price_cents: number };
 
-const REGIONS = ["EU", "AP", "KR", "LATAM", "BR"] as const;
+const REGIONS = ["EU", "NA", "AP", "KR", "LATAM", "BR"] as const;
 
 export async function GET(req: Request) {
   const session = sessionFromRequest(req);

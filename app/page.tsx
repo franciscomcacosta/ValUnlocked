@@ -12,12 +12,13 @@ import { LockLogo } from "@/components/lock-logo";
 
 // ----- Types ----------------------------------------------------
 
-const REGIONS = ["EU", "AP", "KR", "LATAM", "BR"] as const;
+const REGIONS = ["EU", "NA", "AP", "KR", "LATAM", "BR"] as const;
 type Region = typeof REGIONS[number];
 type Tier = "standard" | "premium" | "ultra";
 
 const REGION_NAME: Record<Region, string> = {
   EU: "Europe",
+  NA: "North America",
   AP: "Asia Pacific",
   KR: "Korea",
   LATAM: "Latin America",
@@ -115,6 +116,21 @@ export default function Page() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabKey>("stock");
+  const [topup, setTopup] = useState<{ open: boolean; returnId: string | null }>({ open: false, returnId: null });
+
+  const reloadMe = useCallback(() => {
+    fetch("/api/me").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) setMe(d); }).catch(() => {});
+  }, []);
+
+  // Back from a NowPayments top-up invoice: /?topup=<id> → reopen the
+  // pop-up in "waiting for confirmation" mode and tidy the URL.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("topup");
+    if (id) {
+      setTopup({ open: true, returnId: id });
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/me")
@@ -160,7 +176,7 @@ export default function Page() {
         overflow: "hidden",
       }}
     >
-      <Header me={me} tab={tab} onTab={setTab} isUltra={isUltra} />
+      <Header me={me} tab={tab} onTab={setTab} isUltra={isUltra} onTopup={() => setTopup({ open: true, returnId: null })} />
 
       <main
         style={{
@@ -176,9 +192,18 @@ export default function Page() {
         )}
         {tab === "purchases" && <PurchasesTab />}
         {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} onOrders={() => setTab("purchases")} />}
-        {tab === "autobuy" && <AutobuyTab me={me} isUltra={isUltra} onSub={() => setTab("subscribe")} />}
+        {tab === "autobuy" && <AutobuyTab me={me} isUltra={isUltra} onSub={() => setTab("subscribe")} onTopup={() => setTopup({ open: true, returnId: null })} />}
         {tab === "admin" && me.isAdmin && <AdminTab />}
       </main>
+
+      {topup.open && (
+        <TopupModal
+          creditCents={me.creditCents}
+          returnId={topup.returnId}
+          onCredited={reloadMe}
+          onClose={() => { setTopup({ open: false, returnId: null }); reloadMe(); }}
+        />
+      )}
     </div>
   );
 }
@@ -188,8 +213,8 @@ export default function Page() {
 // ================================================================
 
 function Header({
-  me, tab, onTab, isUltra,
-}: { me: Me; tab: TabKey; onTab: (t: TabKey) => void; isUltra: boolean }) {
+  me, tab, onTab, isUltra, onTopup,
+}: { me: Me; tab: TabKey; onTab: (t: TabKey) => void; isUltra: boolean; onTopup: () => void }) {
   const feed = SAMPLE_FEED.concat(SAMPLE_FEED);
   const subDaysLeft = me.sub
     ? Math.max(0, Math.floor(
@@ -311,28 +336,32 @@ function Header({
           </div>
         )}
 
-        {/* Credit pill */}
-        {me.creditCents > 0 && (
-          <div
-            className="cs"
-            style={{
-              flex: "none",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              height: "36px",
-              padding: "0 12px",
-              background: "rgba(255,212,0,0.12)",
-            }}
+        {/* Credit chip — opens the top-up pop-up */}
+        <button
+          className="cs credit-chip"
+          onClick={onTopup}
+          aria-label={`Credit €${eur(me.creditCents)}. Top up`}
+          style={{
+            flex: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            height: "36px",
+            padding: "0 6px 0 12px",
+            border: 0,
+            cursor: "pointer",
+            background: "rgba(255,212,0,0.12)",
+          }}
+        >
+          <span className="bc" style={{ color: "#ffd400", fontWeight: 600, fontSize: "14px" }}>Credit</span>
+          <span className="num" style={{ fontWeight: 700, color: "#ffd400" }}>€{eur(me.creditCents)}</span>
+          <span
+            className="bc"
+            style={{ height: "24px", padding: "0 8px", display: "inline-flex", alignItems: "center", background: "#ffd400", color: "var(--vu-navy)", fontWeight: 700, fontSize: "13px" }}
           >
-            <span className="bc" style={{ color: "#ffd400", fontWeight: 600, fontSize: "14px" }}>
-              Credit
-            </span>
-            <span className="num" style={{ fontWeight: 700, color: "#ffd400" }}>
-              €{eur(me.creditCents)}
-            </span>
-          </div>
-        )}
+            + Top up
+          </span>
+        </button>
 
         {/* Avatar */}
         {me.avatar ? (
@@ -783,7 +812,7 @@ function StockTab({ me }: { me: Me }) {
               {brackets === null ? (
                 <SkeletonGrid rows={2} cols={3} />
               ) : visibleBrackets.every((b) => b.available === 0) ? (
-                <EmptyState region={region} />
+                <EmptyState region={region} onShowEU={() => setRegion("EU")} euCount={totalsByRegion.EU ?? 0} />
               ) : (
                 <div
                   style={{
@@ -813,6 +842,8 @@ function StockTab({ me }: { me: Me }) {
             <>
               {featured === null ? (
                 <SkeletonGrid rows={3} cols={4} />
+              ) : brackets !== null && (totalsByRegion[region] ?? 0) === 0 ? (
+                <EmptyState region={region} onShowEU={() => setRegion("EU")} euCount={totalsByRegion.EU ?? 0} />
               ) : (
                 <SkinGrid
                   visibleSkins={visibleSkins}
@@ -1522,10 +1553,17 @@ function SkinTile({
   );
 }
 
-function EmptyState({ region, forSkins = false }: { region: Region; forSkins?: boolean }) {
+function EmptyState({
+  region, forSkins = false, onShowEU, euCount = 0,
+}: {
+  region: Region;
+  forSkins?: boolean;
+  onShowEU?: () => void;
+  euCount?: number;
+}) {
   return (
     <div
-      className="cut"
+      className="cut rise"
       style={{
         height: "100%",
         display: "flex",
@@ -1543,9 +1581,16 @@ function EmptyState({ region, forSkins = false }: { region: Region; forSkins?: b
       <span className="h" style={{ fontSize: "24px" }}>
         {forSkins ? `No matching skins in ${REGION_NAME[region]}` : `No stock in ${REGION_NAME[region]}`}
       </span>
-      <span style={{ color: "var(--vu-ivory-dim)" }}>
-        Supplier stock refreshes every 5 minutes. Check back soon or try another region.
+      <span style={{ color: "var(--vu-ivory-dim)", maxWidth: "420px" }}>
+        {forSkins
+          ? "Try another weapon or clear the search."
+          : "There are no accounts in this region right now. Supplier stock is checked every 5 minutes, so new drops show up here as soon as they land."}
       </span>
+      {!forSkins && onShowEU && region !== "EU" && euCount > 0 && (
+        <button className="btn btn-red cs" style={{ marginTop: "8px" }} onClick={onShowEU}>
+          Show Europe · <span className="num">{euCount}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -2618,11 +2663,12 @@ type AutobuyRule = {
 };
 
 function AutobuyTab({
-  me, isUltra, onSub,
+  me, isUltra, onSub, onTopup,
 }: {
   me: Me;
   isUltra: boolean;
   onSub: () => void;
+  onTopup: () => void;
 }) {
   if (!isUltra) {
     return (
@@ -2631,11 +2677,11 @@ function AutobuyTab({
         description="Set filters for price, rank, skins, level and VP. The bot buys matching drops the moment they land, paid from your credit."
         onSub={onSub}
       >
-        <AutobuyManager me={me} />
+        <AutobuyManager me={me} onTopup={onTopup} />
       </LockedOverlay>
     );
   }
-  return <AutobuyManager me={me} />;
+  return <AutobuyManager me={me} onTopup={onTopup} />;
 }
 
 // ---- Shared Ultra-lock overlay ---------------------------------------
@@ -2789,7 +2835,7 @@ function ruleSummary(r: AutobuyRule): string {
 type MatchRow = { id: string; rank: string; rankIcon: string | null; region: string; skins: number; level: number; finalCents: number };
 type CatalogSkin = { key: string; label: string; icon: string | null; tier: string | null; tierColor: string | null };
 
-function AutobuyManager({ me }: { me: Me }) {
+function AutobuyManager({ me, onTopup }: { me: Me; onTopup: () => void }) {
   const [rules, setRules] = useState<AutobuyRule[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<RuleDraft>(NEW_RULE);
@@ -3141,9 +3187,12 @@ function AutobuyManager({ me }: { me: Me }) {
             )}
             {err && <div className="rise" style={{ background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "12px", padding: "8px 10px" }}>{err}</div>}
             {saved && !err && <div className="rise" style={{ background: "#dcfce7", color: "#15803d", fontSize: "12px", padding: "8px 10px" }}>Rule saved.</div>}
-            <button className="btn btn-red cs" style={{ width: "100%" }} onClick={onSave} disabled={busy}>
-              {busy ? "Saving…" : needsConfirm ? "Save & activate" : current ? "Save changes" : "Save rule"}
-            </button>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button className="btn btn-soft cs" style={{ flex: 1 }} onClick={onTopup}>Top up</button>
+              <button className="btn btn-red cs" style={{ flex: 2 }} onClick={onSave} disabled={busy}>
+                {busy ? "Saving…" : needsConfirm ? "Save & activate" : current ? "Save changes" : "Save rule"}
+              </button>
+            </div>
           </section>
         </aside>
       </div>
@@ -3193,6 +3242,205 @@ function AutobuyManager({ me }: { me: Me }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ================================================================
+// Credit top-up pop-up
+// ================================================================
+
+type TopupTierRow = { id: string; payCents: number; bonusCents: number };
+
+function TopupModal({
+  creditCents, returnId, onCredited, onClose,
+}: {
+  creditCents: number;
+  returnId: string | null;
+  onCredited: () => void;
+  onClose: () => void;
+}) {
+  const [tiers, setTiers] = useState<TopupTierRow[] | null>(null);
+  const [bonusPct, setBonusPct] = useState(0.05);
+  const [pick, setPick] = useState<string>("t25");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [status, setStatus] = useState<{ state: string; totalCents: number } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/topup")
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) { setTiers(d.tiers); setBonusPct(d.bonusPct); } else setTiers([]); })
+      .catch(() => setTiers([]));
+  }, []);
+
+  // Returning from NowPayments: poll until the IPN credits the wallet.
+  useEffect(() => {
+    if (!returnId) return;
+    let stop = false;
+    let tries = 0;
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/topup?id=${encodeURIComponent(returnId)}`);
+        const d = await r.json();
+        if (stop) return;
+        if (d.ok) {
+          setStatus({ state: d.status, totalCents: d.payCents + d.bonusCents });
+          if (d.status === "credited") { onCredited(); return; }
+          if (["expired", "failed", "partially_paid", "invoice_failed"].includes(d.status)) return;
+        } else {
+          setStatus({ state: "unknown", totalCents: 0 });
+          return;
+        }
+      } catch { /* retry */ }
+      if (++tries < 60 && !stop) setTimeout(tick, 5000);
+    };
+    tick();
+    return () => { stop = true; };
+  }, [returnId, onCredited]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const tier = tiers?.find((t) => t.id === pick) ?? null;
+
+  async function pay() {
+    if (!tier) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await fetch("/api/topup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier: tier.id }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.invoiceUrl) {
+        throw new Error(
+          d.error === "topup_unavailable" ? "Top-ups aren't switched on yet. Try again soon."
+          : d.error === "payment_error" ? "Couldn't reach the payment provider. Try again in a minute."
+          : "Something went wrong creating the payment."
+        );
+      }
+      window.location.href = d.invoiceUrl;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+
+  const statusCopy: Record<string, { t: string; d: string; c: string }> = {
+    credited: { t: "Credit added", d: "Your wallet has been topped up.", c: "#4ade80" },
+    waiting: { t: "Waiting for payment", d: "Finish paying on the NowPayments page. This updates on its own.", c: "#ffd400" },
+    confirming: { t: "Confirming on-chain", d: "Payment seen. Credit lands once the network confirms it.", c: "#ffd400" },
+    confirmed: { t: "Confirming on-chain", d: "Almost there — credit lands in a moment.", c: "#ffd400" },
+    sending: { t: "Confirming on-chain", d: "Almost there — credit lands in a moment.", c: "#ffd400" },
+    partially_paid: { t: "Partially paid", d: "The payment was short. Staff have been notified and will sort it out.", c: "#f5955b" },
+    expired: { t: "Payment expired", d: "Nothing was charged. Start a new top-up below.", c: "#ff6b77" },
+    failed: { t: "Payment failed", d: "Nothing was credited. Start a new top-up below.", c: "#ff6b77" },
+    unknown: { t: "Top-up not found", d: "We couldn't find that payment. If you paid, contact support.", c: "#ff6b77" },
+  };
+  const sc = status ? statusCopy[status.state] ?? statusCopy.waiting : returnId ? statusCopy.waiting : null;
+  const showPicker = !returnId || (status && ["credited", "expired", "failed", "unknown", "invoice_failed"].includes(status.state));
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(15,25,35,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div role="dialog" aria-modal="true" aria-label="Top up credit" className="cut rise" style={{ width: "100%", maxWidth: "620px", maxHeight: "100%", overflow: "auto", background: "#fff", display: "flex", flexDirection: "column" }}>
+        <div style={{ background: "var(--vu-navy)", color: "#fff", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px", borderBottom: "3px solid #ffd400" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            <span className="h" style={{ fontSize: "26px" }}>Top up <span style={{ color: "#ffd400" }}>credit</span></span>
+            <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>
+              Every top-up gets <b style={{ color: "#ffd400" }}>+{Math.round(bonusPct * 100)}% bonus credit</b> · balance €{eur(creditCents)}
+            </span>
+          </div>
+          <button className="ico" style={{ color: "var(--vu-ivory-dim)" }} aria-label="Close" onClick={onClose}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+
+        <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {sc && (
+            <div className="rise" style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 12px", background: "var(--vu-navy)", color: "#fff" }}>
+              {status?.state !== "credited" && !["expired", "failed", "unknown", "partially_paid"].includes(status?.state ?? "") ? (
+                <span className="live" style={{ width: "8px", height: "8px", borderRadius: "50%", background: sc.c, flex: "none" }} />
+              ) : (
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: sc.c, flex: "none" }} />
+              )}
+              <span style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                <span className="bc" style={{ fontWeight: 700, fontSize: "16px", color: sc.c }}>
+                  {sc.t}{status?.state === "credited" && status.totalCents ? ` · +€${eur(status.totalCents)}` : ""}
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>{sc.d}</span>
+              </span>
+              {status?.state === "credited" && <button className="btn btn-gold cs btn-sm" onClick={onClose}>Done</button>}
+            </div>
+          )}
+
+          {showPicker && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "8px" }}>
+                {tiers === null
+                  ? Array.from({ length: 5 }).map((_, i) => <div key={i} className="skel cs" style={{ height: "128px" }} />)
+                  : tiers.map((t, i) => {
+                    const on = t.id === pick;
+                    const best = i === tiers.length - 1;
+                    return (
+                      <button
+                        key={t.id}
+                        className={`tile cs ${on ? "on" : ""}`}
+                        style={{ ["--tc" as string]: "#ffd400", height: "128px", alignItems: "stretch" }}
+                        onClick={() => setPick(t.id)}
+                        aria-pressed={on}
+                        aria-label={`Pay €${eur(t.payCents)}, get €${eur(t.payCents + t.bonusCents)}`}
+                      >
+                        <span className="glow" style={{ opacity: on ? 0.75 : 0.3 }} />
+                        <span style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 8px 0", minHeight: "24px" }}>
+                          <span className="bc" style={{ fontSize: "11px", fontWeight: 600, color: "#9aa5b1" }}>Pay</span>
+                          {best && <span className="bc" style={{ fontSize: "10px", fontWeight: 700, color: "#0f1923", background: "#ffd400", padding: "1px 5px" }}>Most credit</span>}
+                        </span>
+                        <span style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                          <span className="h num" style={{ fontSize: "34px", color: "#fff" }}>€{t.payCents / 100}</span>
+                          <span className="bc num" style={{ fontSize: "13px", fontWeight: 700, color: "#ffd400" }}>+€{eur(t.bonusCents)} bonus</span>
+                        </span>
+                        <span className="strip" style={{ justifyContent: "center" }}>
+                          <span className="bc num" style={{ fontSize: "13px", color: "#fff", fontWeight: 700 }}>Get €{eur(t.payCents + t.bonusCents)}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+
+              {tier && (
+                <div style={{ background: "var(--vu-surface-alt)", padding: "2px 12px" }}>
+                  <div className="kv"><span className="mut">You pay</span><span className="num">€{eur(tier.payCents)}</span></div>
+                  <div className="kv">
+                    <span style={{ color: "var(--accent-success)", fontWeight: 500 }}>Bonus +{Math.round(bonusPct * 100)}%</span>
+                    <span className="num" style={{ color: "var(--accent-success)", fontWeight: 600 }}>+€{eur(tier.bonusCents)}</span>
+                  </div>
+                  <div className="kv" style={{ borderTop: "1px solid var(--vu-divider-strong)", height: "46px" }}>
+                    <span className="bc" style={{ fontWeight: 700, fontSize: "16px" }}>New balance</span>
+                    <span className="h num" style={{ fontSize: "30px", color: "#a68a00" }}>€{eur(creditCents + tier.payCents + tier.bonusCents)}</span>
+                  </div>
+                </div>
+              )}
+
+              {err && <div className="rise" style={{ background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px", padding: "8px 10px" }}>{err}</div>}
+
+              <button className="btn btn-gold cut btn-lg" onClick={pay} disabled={!tier || busy}>
+                {busy ? "Opening payment…" : tier ? `Pay €${eur(tier.payCents)} with crypto` : "Pay"}
+              </button>
+              <span className="mut" style={{ fontSize: "12px", textAlign: "center" }}>
+                Paid through NowPayments in the coin you choose. Credit lands automatically once the payment confirms.
+              </span>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

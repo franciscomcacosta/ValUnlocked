@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 
 // NOWPayments IPN handler. Branches on the order_id prefix:
 //   "sub_<uuid>"  → subscription invoice (lib/subs.applyPaidSubInvoice)
+//   "topup_<uuid>"→ credit top-up (apply_topup: paid + bonus, exactly once)
 //   "<uuid>"      → account order (lib/fulfil.fulfilOrder)
 //
 // Both branches log raw events to ipn_events for audit, verify HMAC,
@@ -35,6 +36,9 @@ export async function POST(req: Request) {
   // Route by order_id prefix.
   if (ipn.order_id?.startsWith("sub_")) {
     return handleSubIpn(ipn, paymentId);
+  }
+  if (ipn.order_id?.startsWith("topup_")) {
+    return handleTopupIpn(ipn, paymentId);
   }
   return handleOrderIpn(ipn, paymentId);
 }
@@ -72,6 +76,36 @@ async function handleSubIpn(ipn: IpnPayload, paymentId: string): Promise<Respons
   }
   // IN_PROGRESS statuses just log, no action — payment is still settling.
 
+  return new Response("ok");
+}
+
+async function handleTopupIpn(ipn: IpnPayload, paymentId: string): Promise<Response> {
+  const id = ipn.order_id.replace(/^topup_/, "");
+  const { data: top } = await db
+    .from("topup_invoices")
+    .select("id, user_id, pay_cents, bonus_cents, credited_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (!top) return new Response("unknown topup", { status: 200 });
+  if (top.credited_at) return new Response("ok");   // idempotent
+
+  await db
+    .from("topup_invoices")
+    .update({ np_payment_id: paymentId, np_status: ipn.payment_status })
+    .eq("id", top.id);
+
+  if (PAID.has(ipn.payment_status)) {
+    const { data: credited } = await db.rpc("apply_topup", { p_id: top.id });
+    if (credited && credited > 0) {
+      await logToStaff(
+        `💳 Top-up ${top.id}: €${(top.pay_cents / 100).toFixed(2)} paid, €${((top.pay_cents + top.bonus_cents) / 100).toFixed(2)} credited.`
+      );
+    }
+  } else if (ipn.payment_status === "partially_paid") {
+    await logToStaff(
+      `⚠️ Top-up ${top.id} partially paid: ${ipn.actually_paid} ${ipn.pay_currency?.toUpperCase()}. Not credited — needs manual handling.`
+    );
+  }
   return new Response("ok");
 }
 

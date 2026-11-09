@@ -13,6 +13,7 @@ export async function createInvoice(opts: {
   priceCents: number;
   currency: string;
   description: string;
+  successPath?: string;   // defaults to /orders/<orderId>
 }): Promise<InvoiceResult> {
   const base = process.env.PUBLIC_BASE_URL!;
   const res = await fetch(`${API}/invoice`, {
@@ -27,8 +28,8 @@ export async function createInvoice(opts: {
       order_id: opts.orderId,
       order_description: opts.description,
       ipn_callback_url: `${base}/api/ipn`,
-      success_url: `${base}/orders/${opts.orderId}`,
-      cancel_url: `${base}/orders/${opts.orderId}`,
+      success_url: `${base}${opts.successPath ?? `/orders/${opts.orderId}`}`,
+      cancel_url: `${base}${opts.successPath ?? `/orders/${opts.orderId}`}`,
       is_fee_paid_by_user: true, // fewer partially_paid orders
     }),
   });

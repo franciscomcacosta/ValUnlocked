@@ -895,25 +895,22 @@ function StockTab({ me }: { me: Me }) {
                 </div>
               ) : (
                 <>
-                  {selDisplay.tierLabel && selDisplay.tierIcon && (
+                  {selDisplay.tierLabel && (
                     <span
-                      style={{
-                        position: "absolute",
-                        left: "12px",
-                        top: "10px",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                      }}
+                      className="tier-ribbon"
+                      style={{ fontSize: "11.5px", padding: "6px 16px 6px 12px" }}
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={selDisplay.tierIcon} alt="" style={{ width: "18px", height: "18px" }} />
-                      <span
-                        className="bc"
-                        style={{ fontSize: "14px", fontWeight: 700, color: selDisplay.tc }}
-                      >
-                        {selDisplay.tierLabel} edition
-                      </span>
+                      {selDisplay.tierIcon ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={selDisplay.tierIcon}
+                          alt=""
+                          style={{ width: "13px", height: "13px", objectFit: "contain" }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: "10px" }}>◆</span>
+                      )}
+                      <span>{selDisplay.tierLabel} edition</span>
                     </span>
                   )}
                   {selDisplay.icon ? (
@@ -1023,6 +1020,46 @@ function StockTab({ me }: { me: Me }) {
               </div>
             )}
 
+            {/* CREDIT APPLIED yellow banner — mirrors the designer's
+                "€12.40 applied · €3.59 left via crypto" row. */}
+            {useCredit && creditUsed > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  padding: "10px 12px",
+                  background: "rgba(255, 212, 0, 0.1)",
+                  borderLeft: "3px solid #ffd400",
+                  fontSize: "12px",
+                  color: "var(--vu-ivory)",
+                }}
+              >
+                <span
+                  className="bc"
+                  style={{
+                    fontSize: "10px",
+                    fontWeight: 800,
+                    color: "#a16207",
+                    letterSpacing: "0.14em",
+                    minWidth: "90px",
+                  }}
+                >
+                  CREDIT<br />APPLIED
+                </span>
+                <span style={{ flex: 1, lineHeight: 1.4 }}>
+                  <b className="num">€{eur(creditUsed)}</b> applied
+                  {dueCents > 0 ? (
+                    <>
+                      {" · "}
+                      <b className="num">€{eur(dueCents)}</b> left via crypto
+                    </>
+                  ) : (
+                    <> — nothing left to pay</>
+                  )}
+                </span>
+              </div>
+            )}
+
             <div style={{ flex: 1 }} />
 
             <button
@@ -1030,7 +1067,13 @@ function StockTab({ me }: { me: Me }) {
               onClick={buyNow}
               disabled={busy || selDisplay.stock === 0}
             >
-              {busy ? "…" : selDisplay.stock === 0 ? "Sold out" : `Buy — €${eur(dueCents)}`}
+              {busy
+                ? "…"
+                : selDisplay.stock === 0
+                ? "Sold out"
+                : dueCents === 0
+                ? `Unlock with credit`
+                : `Unlock · €${eur(dueCents)}`}
             </button>
           </div>
         )}
@@ -1358,18 +1401,36 @@ function SkinTile({
     >
       <span className="glow" />
       {/* Tier ribbon top-left (ULTRA / EXCLUSIVE / PREMIUM / SELECT) +
-          region tag top-right, mirrors the designer's layout. */}
+          HOT chip for in-stock skins, mirrors the designer. */}
       {row.tier && (
         <span className="tier-ribbon">
-          {row.tierIcon && (
+          {row.tierIcon ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={row.tierIcon}
               alt=""
-              style={{ width: "12px", height: "12px", objectFit: "contain" }}
+              style={{ width: "11px", height: "11px", objectFit: "contain" }}
             />
+          ) : (
+            <span style={{ fontSize: "9px", opacity: 0.9 }}>◆</span>
           )}
-          {row.tier}
+          <span>{row.tier}</span>
+          {!soldOut && (
+            <span
+              style={{
+                marginLeft: "4px",
+                background: "#ffd400",
+                color: "#111",
+                fontWeight: 900,
+                fontSize: "9px",
+                letterSpacing: "0.1em",
+                padding: "1px 5px 1px 4px",
+                clipPath: "polygon(0 0, 100% 0, calc(100% - 3px) 100%, 0 100%)",
+              }}
+            >
+              HOT
+            </span>
+          )}
         </span>
       )}
       <span
@@ -1461,17 +1522,17 @@ function SkinTile({
               : row.label}
           </span>
         </span>
-        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.05 }}>
+        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1 }}>
           {soldOut ? (
             <span className="bc" style={{ fontSize: "12px", color: "#f87171", fontWeight: 700 }}>
               Sold out
             </span>
           ) : (
             <>
-              <span className="bc" style={{ fontSize: "9.5px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.16em" }}>
+              <span className="bc" style={{ fontSize: "9px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.18em", marginBottom: "2px" }}>
                 FROM
               </span>
-              <span className="bc num" style={{ fontWeight: 800, fontSize: "18px", color: "#fff" }}>
+              <span className="bc num" style={{ fontWeight: 800, fontSize: "17px", color: "#fff" }}>
                 €{eur(row.finalCents)}
               </span>
             </>

@@ -300,6 +300,18 @@ async function refundSoldOut(orderId: string, userId: string, discordId: string 
   if (paid > 0) {
     await db.rpc("add_credit", { p_user_id: userId, p_cents: paid, p_reason: "sold_out_refund", p_order_id: orderId });
   }
+  if (paid === 0) {
+    // Free gift: the order is now "refunded", which re-opens the gift.
+    await logToStaff(`🎁 Order ${orderId}: free gift sold out mid-delivery — gift re-opened for the buyer.`);
+    if (discordId) {
+      await notifyDiscordUser(
+        discordId,
+        `Sorry — that free **${itemName}** account sold out the moment it was being delivered. ` +
+          `Your free account is still yours: pick a region and claim it again here: ${process.env.PUBLIC_BASE_URL}/?claim=gift`
+      ).catch(() => {});
+    }
+    return;
+  }
   await logToStaff(`💸 Order ${orderId}: sold out on qvsp with no equivalent — refunded €${(paid / 100).toFixed(2)} to credit.`);
   if (discordId) {
     await notifyDiscordUser(

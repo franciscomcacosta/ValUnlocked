@@ -42,7 +42,7 @@ export async function GET(req: Request) {
       .from("replacement_claims")
       .select(PUBLIC_COLS)
       .eq("user_id", session.uid)
-      .in("status", ["refunded", "replaced"])
+      .in("status", ["refunded", "replaced", "reissued"])
       .is("customer_seen_at", null)
       .order("resolved_at", { ascending: false });
     if (error) return Response.json({ ok: true, claims: [] });   // table not migrated yet

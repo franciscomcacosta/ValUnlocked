@@ -24,7 +24,7 @@ export type ClaimSummary = {
   id: string;
   order_id?: string;
   reason: string;
-  status: string;            // submitted | under_review | replaced | refunded | denied
+  status: string;            // submitted | under_review | replaced | refunded | reissued | denied
   outcome_note: string | null;
   refund_cents: number;
   bonus_cents: number;
@@ -234,8 +234,12 @@ export function ReportProblemModal({
             </label>
 
             <span className="mut" style={{ fontSize: "12px" }}>
-              We review your video with the supplier. If they send a replacement, you get that account. If not, you get back the
-              full <b style={{ color: "#0f1923" }}>€{eur(paidCents)}</b> you paid plus a <b style={{ color: "#15803d" }}>5% apology bonus</b> as credit.
+              We review your video with the supplier. If they send a replacement, you get that account.{" "}
+              {paidCents > 0 ? (
+                <>If not, you get back the full <b style={{ color: "#0f1923" }}>€{eur(paidCents)}</b> you paid plus a <b style={{ color: "#15803d" }}>5% apology bonus</b> as credit.</>
+              ) : (
+                <>If not, you get a <b style={{ color: "#15803d" }}>brand-new free account</b> to claim.</>
+              )}{" "}
               The outcome arrives as a Discord DM.
             </span>
 
@@ -273,6 +277,19 @@ export function ClaimStatusCard({ claim, onOpenOrder }: { claim: ClaimSummary; o
       </div>
     );
   }
+  if (claim.status === "reissued") {
+    return (
+      <div className="cut reveal" style={{ position: "relative", overflow: "hidden", background: "#0f1923", color: "#fff", padding: "16px", ["--tc" as string]: "#ffd400" }}>
+        <span className="burst" />
+        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span className="bc" style={{ color: "#ffd400", fontWeight: 700, fontSize: "14px", letterSpacing: "0.1em" }}>New free account</span>
+          <span className="h" style={{ fontSize: "28px" }}>Claim a fresh one</span>
+          <span style={{ fontSize: "13px", color: "#9aa5b1" }}>Sorry that one didn&apos;t work. Your free account is back — pick a region and it&apos;s delivered instantly.</span>
+          <a className="btn btn-gold cs btn-sm" style={{ textDecoration: "none" }} href="/?claim=gift">Claim my new account</a>
+        </div>
+      </div>
+    );
+  }
   if (claim.status === "replaced") {
     return (
       <div className="cut reveal" style={{ position: "relative", overflow: "hidden", background: "#0f1923", color: "#fff", padding: "16px", ["--tc" as string]: "#22d3ee" }}>
@@ -299,7 +316,9 @@ export function ClaimStatusCard({ claim, onOpenOrder }: { claim: ClaimSummary; o
       <span className="pill a" style={{ alignSelf: "flex-start", background: "#fff7d6" }}>Under review</span>
       <span style={{ fontSize: "13px" }}>
         Ticket <b className="mono">RF-{claim.id.slice(0, 8).toUpperCase()}</b>. A replacement if the supplier sends one,
-        otherwise €{eur(claim.refund_cents)} back + €{eur(claim.bonus_cents)} apology bonus as credit.
+        otherwise {claim.refund_cents > 0
+          ? <>€{eur(claim.refund_cents)} back + €{eur(claim.bonus_cents)} apology bonus as credit.</>
+          : <>a brand-new free account to claim.</>}
       </span>
     </div>
   );
@@ -328,6 +347,7 @@ export function ClaimOutcomeModal({ onCredited }: { onCredited?: () => void }) {
   if (!claims.length) return null;
   const refunds = claims.filter((c) => c.status === "refunded");
   const replaced = claims.filter((c) => c.status === "replaced");
+  const reissued = claims.filter((c) => c.status === "reissued");
   const paid = refunds.reduce((a, c) => a + c.refund_cents, 0);
   const bonus = refunds.reduce((a, c) => a + c.bonus_cents, 0);
 
@@ -339,7 +359,7 @@ export function ClaimOutcomeModal({ onCredited }: { onCredited?: () => void }) {
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(15,25,35,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-      <div role="dialog" aria-modal="true" aria-label="Your report was resolved" className="cut reveal" style={{ position: "relative", overflow: "hidden", width: "100%", maxWidth: "460px", background: "#0f1923", color: "#fff", ["--tc" as string]: refunds.length ? "#4ade80" : "#22d3ee" }}>
+      <div role="dialog" aria-modal="true" aria-label="Your report was resolved" className="cut reveal" style={{ position: "relative", overflow: "hidden", width: "100%", maxWidth: "460px", background: "#0f1923", color: "#fff", ["--tc" as string]: refunds.length ? "#4ade80" : reissued.length ? "#ffd400" : "#22d3ee" }}>
         <span className="burst" />
         <div style={{ position: "relative", padding: "26px 24px 22px", display: "flex", flexDirection: "column", gap: "12px", alignItems: "center", textAlign: "center" }}>
           {refunds.length > 0 ? (
@@ -356,6 +376,14 @@ export function ClaimOutcomeModal({ onCredited }: { onCredited?: () => void }) {
               <span style={{ fontSize: "13px", color: "#9aa5b1" }}>Sorry that account didn&apos;t work out. The credit is ready to spend right now.</span>
             </>
           ) : null}
+          {reissued.length > 0 && (
+            <>
+              <span className="bc" style={{ color: "#ffd400", fontWeight: 700, fontSize: "15px", letterSpacing: "0.12em" }}>New free account</span>
+              <span className="h" style={{ fontSize: refunds.length ? "26px" : "40px" }}>Your free account is back</span>
+              <span style={{ fontSize: "13px", color: "#9aa5b1" }}>Sorry that one didn&apos;t work. Pick a region and claim a brand-new one — it&apos;s delivered instantly.</span>
+              <a className="btn btn-gold cs" style={{ width: "100%", textDecoration: "none" }} href="/?claim=gift" onClick={close}>Claim my new account</a>
+            </>
+          )}
           {replaced.length > 0 && (
             <>
               <span className="bc" style={{ color: "#67e8f9", fontWeight: 700, fontSize: "15px", letterSpacing: "0.12em" }}>Replacement delivered</span>

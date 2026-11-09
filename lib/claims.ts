@@ -189,7 +189,36 @@ async function deliverReplacement(c: ClaimRow, t: TicketView): Promise<boolean> 
   return true;
 }
 
+/** Free-gift orders (nothing paid): instead of a €0.00 refund, give the
+ *  free account back — marking the order refunded re-opens the gift, so the
+ *  buyer just claims a fresh one on the dashboard. */
+async function reissueGift(c: ClaimRow, note: string): Promise<boolean> {
+  const { data: upd } = await db
+    .from("replacement_claims")
+    .update({ status: "reissued", resolved_at: new Date().toISOString(), outcome_note: note })
+    .eq("id", c.id)
+    .in("status", ["submitted", "under_review"])
+    .select("id");
+  if (!upd?.length) return false;
+  await db.from("orders").update({ status: "refunded_credit" }).eq("id", c.order_id);
+  await dm(
+    c.user_id,
+    `💛 Sorry that free account didn't work. **You get a brand-new free account instead** — ` +
+      `pick your region and claim it here: ${base()}/?claim=gift`
+  );
+  await logToStaff(`🎁 Claim ${c.id}: free gift account re-issued (order ${c.order_id}).`);
+  return true;
+}
+
+async function isGiftOrder(orderId: string): Promise<boolean> {
+  const { data } = await db.from("orders").select("credit_used_cents, charge_cents, products(slug)").eq("id", orderId).single();
+  const slug = (data?.products as unknown as { slug?: string } | null)?.slug ?? "";
+  const paid = ((data?.credit_used_cents as number) ?? 0) + ((data?.charge_cents as number) ?? 0);
+  return paid === 0 && /^qvsp-(welcome|gift)-/.test(slug);
+}
+
 async function refundClaim(c: ClaimRow, note: string): Promise<boolean> {
+  if (c.refund_cents === 0 && (await isGiftOrder(c.order_id))) return reissueGift(c, note);
   const { data: credited } = await db.rpc("apply_claim_refund", { p_claim: c.id, p_note: note });
   if (!credited) return false;
   await dm(

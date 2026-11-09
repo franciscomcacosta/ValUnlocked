@@ -15,6 +15,7 @@ import {
 import { db } from "../../lib/supabase";
 import { setTierRole, clearTierRoles, notifyDiscordUser, logToStaff } from "../../lib/discord";
 import { SUB_GRACE_HOURS, tierLabel, type SubTier } from "../../lib/pricing";
+import { BASE_URL } from "../base-url";
 
 const TIERS: SubTier[] = ["standard", "premium", "ultra"];
 
@@ -141,7 +142,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await notifyDiscordUser(
       target.id,
       `🎁 You've been given **${tierLabel(tier)}** on Val Unlocked until <t:${Math.floor(end.getTime() / 1000)}:D>.\n` +
-        `Your discount, early access and perks are live now: ${process.env.PUBLIC_BASE_URL ?? "https://valunlock.online"}`
+        `Your discount, early access and perks are live now: ${BASE_URL}`
     ).catch(() => {});
   }
   await logToStaff(

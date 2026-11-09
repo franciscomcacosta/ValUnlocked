@@ -11,7 +11,8 @@ import {
   type ChatInputCommandInteraction,
 } from "discord.js";
 
-const BASE = process.env.PUBLIC_BASE_URL!;
+import { BASE_URL } from "../base-url";
+const BASE = BASE_URL;
 
 export const data = new SlashCommandBuilder()
   .setName("welcome")

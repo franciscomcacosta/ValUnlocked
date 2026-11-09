@@ -30,7 +30,8 @@ import { logToStaff } from "../../lib/discord";
 import { SKIN_BRACKETS } from "../../lib/pricing";
 import { isAdmin, ensureUser, applyPlan } from "./grant";
 
-const BASE = process.env.PUBLIC_BASE_URL ?? "https://valunlock.online";
+import { BASE_URL } from "../base-url";
+const BASE = BASE_URL;
 const GIFT_BRACKET = SKIN_BRACKETS.find((b) => b.name === "s_1_25")!;
 const PAUSE_MS = 1100; // between members — keeps DMs well under Discord's spam limits
 let running = false;

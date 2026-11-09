@@ -13,6 +13,7 @@ import {
 import { setTierRole, notifyDiscordUser, logToStaff } from "../../lib/discord";
 import { tierLabel, type SubTier } from "../../lib/pricing";
 import { isAdmin, ensureUser, applyPlan } from "./grant";
+import { BASE_URL } from "../base-url";
 
 const GIFT_CHANNEL_ID = process.env.GIFT_CHANNEL_ID ?? "1524132175530688632";
 const TIER_COLOR: Record<SubTier, number> = { standard: 0x9aa5b1, premium: 0xd1548d, ultra: 0xfad663 };
@@ -79,7 +80,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await notifyDiscordUser(
     target.id,
     `🎁 **${interaction.user.username}** gifted you **${tierLabel(tier)}** on Val Unlocked — active until <t:${ts}:D>.\n` +
-      `Your discount and perks are live now: ${process.env.PUBLIC_BASE_URL ?? "https://valunlock.online"}`
+      `Your discount and perks are live now: ${BASE_URL}`
   ).catch(() => {});
   await logToStaff(`🎁 ${interaction.user.username} gifted **${tierLabel(tier)}** (${days}d) to <@${target.id}>`).catch(() => {});
 

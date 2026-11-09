@@ -29,11 +29,11 @@ export async function POST(req: Request) {
     ? (body.names as unknown[]).filter((n): n is string => typeof n === "string").slice(0, MAX_NAMES)
     : [];
 
-  const art: Record<string, { icon: string | null; tier: string | null; tierColor: string | null }> = {};
+  const art: Record<string, { icon: string | null; tier: string | null; tierColor: string | null; tierIcon: string | null }> = {};
   await Promise.all(
     names.map(async (n) => {
       const a = await lookupSkinArt(clean(n));
-      art[n] = { icon: a.icon, tier: a.tierName, tierColor: a.tierColor };
+      art[n] = { icon: a.icon, tier: a.tierName, tierColor: a.tierColor, tierIcon: a.tierIcon };
     })
   );
   return Response.json({ ok: true, art });

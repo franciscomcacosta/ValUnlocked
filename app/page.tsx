@@ -489,6 +489,29 @@ type Selected =
 
 const SKINS_PER_PAGE = 8;
 
+// Hand-picked Featured skins, in display order. Picks that are out of
+// stock still show in Featured, greyed out as "Out of stock".
+const FEATURED_PICKS = [
+    "Champions 2021 Karambit",
+    "Champions 2021 Vandal",
+    "Arcane Sheriff",
+    "Reaver Karambit",
+    "Champions 2022 Butterfly Knife",
+    "Reaver Vandal",
+    "Champions 2022 Phantom",
+    "Prime Vandal",
+    "Champions 2023 Kunai",
+    "Kuronami Vandal",
+    "Champions 2023 Vandal",
+    "Kuronami no Yaiba",
+    "Champions 2024 Blade",
+    "Champions 2024 Phantom",
+    "Champions 2025 Butterfly Knife",
+    "Champions 2025 Vandal",
+    "Champions 2026 Fan",
+    "Champions 2026 Phantom",
+];
+
 function StockTab({ me }: { me: Me }) {
   const [mode, setMode] = useState<StockMode>("bracket");
   const [region, setRegion] = useState<Region>("EU");
@@ -501,6 +524,14 @@ function StockTab({ me }: { me: Me }) {
   const [query, setQuery] = useState<string>("");
   // Search history for the quick-search chips: { term: timesSearched }.
   // Kept per browser. Default chips show until the first real search.
+  // Art for Featured picks, so sold-out picks can still be drawn.
+  const [pickArt, setPickArt] = useState<Record<string, { icon: string | null; tier: string | null; tierColor: string | null; tierIcon: string | null }>>({});
+  useEffect(() => {
+    fetch("/api/stock/skin-art", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ names: FEATURED_PICKS }) })
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) setPickArt(d.art); })
+      .catch(() => {});
+  }, []);
   const [searchHist, setSearchHist] = useState<Record<string, number>>({});
   const [hiddenDefaults, setHiddenDefaults] = useState<string[]>([]);
   useEffect(() => {
@@ -588,32 +619,36 @@ function StockTab({ me }: { me: Me }) {
 
   // Hand-picked Featured order. Pinned skins come first (in this order,
   // when in stock); the rest of the Ultra / Exclusive skins follow.
-  const FEATURED_ORDER = [
-    "Champions 2021 Karambit",
-    "Champions 2021 Vandal",
-    "Arcane Sheriff",
-    "Reaver Karambit",
-    "Champions 2022 Butterfly Knife",
-    "Reaver Vandal",
-    "Champions 2022 Phantom",
-    "Prime Vandal",
-    "Champions 2023 Kunai",
-    "Kuronami Vandal",
-    "Champions 2023 Vandal",
-    "Kuronami no Yaiba",
-    "Champions 2024 Blade",
-    "Champions 2024 Phantom",
-    "Champions 2025 Butterfly Knife",
-    "Champions 2025 Vandal",
-    "Champions 2026 Fan",
-    "Champions 2026 Phantom",
-  ].map((n) => n.toLowerCase());
+  const FEATURED_ORDER = FEATURED_PICKS.map((n) => n.toLowerCase());
   const featuredRank = (s: FeaturedSkinRow) => {
     const i = FEATURED_ORDER.indexOf(s.label.toLowerCase());
     return i === -1 ? Infinity : i;
   };
   const isFeatured = (s: FeaturedSkinRow) =>
     featuredRank(s) !== Infinity || s.tier === "Ultra" || s.tier === "Exclusive";
+
+  // Picks not in today's stock for this region → greyed "Out of stock" tiles.
+  const inStockLabels = new Set((featured ?? []).map((x) => x.label.toLowerCase()));
+  const soldOutPicks: FeaturedSkinRow[] = FEATURED_PICKS
+    .filter((n) => !inStockLabels.has(n.toLowerCase()))
+    .map((n) => {
+      const a = pickArt[n];
+      return {
+        key: `oos:${n}`,
+        label: n,
+        weapon: n.split(" ").pop() ?? "",
+        available: 0,
+        cheapestQvspCents: null,
+        publicCents: 0,
+        finalCents: 0,
+        savingsCents: 0,
+        discountPct: 0,
+        icon: a?.icon ?? null,
+        tier: a?.tier ?? null,
+        tierColor: a?.tierColor ?? null,
+        tierIcon: a?.tierIcon ?? null,
+      };
+    });
 
   const q = query.trim().toLowerCase();
   const searchFiltered = (featured ?? []).filter((s) =>
@@ -625,6 +660,7 @@ function StockTab({ me }: { me: Me }) {
     : !weaponTab
     ? searchFiltered
         .filter(isFeatured)
+        .concat(featured === null ? [] : soldOutPicks)
         .map((s, i) => ({ s, i }))
         .sort((a, b) => featuredRank(a.s) - featuredRank(b.s) || a.i - b.i)
         .map((x) => x.s)
@@ -633,7 +669,7 @@ function StockTab({ me }: { me: Me }) {
       );
 
   const weaponTabs: Array<{ label: string; count: number }> = [
-    { label: "Featured", count: searchFiltered.filter(isFeatured).length },
+    { label: "Featured", count: searchFiltered.filter(isFeatured).length + (q ? 0 : soldOutPicks.length) },
     { label: "Melee", count: searchFiltered.filter((s) => isMelee(s.weapon)).length },
     ...TAB_GUNS.map((g) => ({ label: g, count: searchFiltered.filter((s) => s.weapon.toLowerCase() === g.toLowerCase()).length })),
   ];
@@ -648,7 +684,8 @@ function StockTab({ me }: { me: Me }) {
   useEffect(() => {
     if (mode !== "skin" || skinSlice.length === 0) return;
     if (sel?.kind === "skin" && skinSlice.some((x) => x.key === sel.row.key)) return;
-    setSel({ kind: "skin", row: skinSlice[0] });
+    const first = skinSlice.find((x) => x.available > 0);
+    if (first) setSel({ kind: "skin", row: first });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, region, skinSliceKey, sel]);
 
@@ -1422,7 +1459,7 @@ function SkinTile({
       onClick={onPick}
       className={`tile cs ${selected ? "on" : ""}`}
       style={{ ["--tc" as string]: tc }}
-      aria-label={`${row.label}, from €${eur(row.finalCents)}`}
+      aria-label={soldOut ? `${row.label}, out of stock` : `${row.label}, from €${eur(row.finalCents)}`}
     >
       <span className="glow" />
       <span style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px 0" }}>
@@ -1453,7 +1490,7 @@ function SkinTile({
       </span>
       <span style={{ position: "relative", display: "flex", justifyContent: "space-between", padding: "0 10px 6px", fontSize: "11px", color: "#9aa5b1" }}>
         <span>Matching stock <b className={`num stk ${stkCls}`}>{row.available}</b></span>
-        <span>Instant</span>
+        <span>{soldOut ? "" : "Instant"}</span>
       </span>
       <span className="strip">
         <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -1462,10 +1499,14 @@ function SkinTile({
             {skinShortName(row.label, row.weapon)}
           </span>
         </span>
-        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-          <span className="bc" style={{ fontSize: "11px", color: "#9aa5b1", lineHeight: 1.1 }}>from</span>
-          <span className="bc num" style={{ fontWeight: 700, fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>€{eur(row.finalCents)}</span>
-        </span>
+        {soldOut ? (
+          <span className="bc" style={{ fontWeight: 700, fontSize: "15px", color: "#cbd5e1", whiteSpace: "nowrap" }}>Out of stock</span>
+        ) : (
+          <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+            <span className="bc" style={{ fontSize: "11px", color: "#9aa5b1", lineHeight: 1.1 }}>from</span>
+            <span className="bc num" style={{ fontWeight: 700, fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>€{eur(row.finalCents)}</span>
+          </span>
+        )}
       </span>
     </button>
   );

@@ -487,7 +487,7 @@ type Selected =
   | { kind: "bracket"; row: BracketRow }
   | { kind: "skin";    row: FeaturedSkinRow };
 
-const SKINS_PER_PAGE = 12;
+const SKINS_PER_PAGE = 8;
 
 function StockTab({ me }: { me: Me }) {
   const [mode, setMode] = useState<StockMode>("bracket");
@@ -551,52 +551,44 @@ function StockTab({ me }: { me: Me }) {
   }, [mode, region, visibleBrackets.length, visibleBrackets[0]?.bracket]);
 
   // --- Skin tab filters: search + weapon sub-tab ---
-  const MELEE_WEAPONS = ["Knife", "Melee", "Karambit", "Kunai", "Dagger", "Sword", "Claw", "Axe", "Blade"];
-  function isMelee(weapon: string): boolean {
-    return MELEE_WEAPONS.some((w) => weapon.toLowerCase().includes(w.toLowerCase()));
-  }
+  // Only real gun classes get their own tab; every other "weapon" word
+  // (Karambit, Harvester, Bio-Atomizers…) is a melee skin → Melee.
+  const GUNS = ["Vandal", "Phantom", "Operator", "Sheriff", "Ghost", "Classic", "Spectre", "Bulldog", "Guardian", "Marshal", "Judge", "Bucky", "Stinger", "Ares", "Odin", "Shorty", "Frenzy", "Outlaw"];
+  const isGun = (w: string) => GUNS.some((g) => g.toLowerCase() === w.toLowerCase());
+  const isMelee = (w: string) => !isGun(w);
+  const isFeatured = (s: FeaturedSkinRow) => s.tier === "Ultra" || s.tier === "Exclusive";
 
-  // Featured = top-tier skins across weapons (Ultra + Exclusive).
-  // The designer's "Featured" tab was a curated highlight reel of the
-  // 8 flashiest skins; we approximate by showing the highest-tier ones
-  // first, which is already how /api/stock/all-skins sorts.
-  function matchesWeaponTab(s: FeaturedSkinRow): boolean {
-    if (!weaponTab) {
-      // Featured: Ultra + Exclusive only
-      return s.tier === "Ultra" || s.tier === "Exclusive";
-    }
-    if (weaponTab === "Melee") return isMelee(s.weapon);
-    return s.weapon.toLowerCase() === weaponTab.toLowerCase();
-  }
-
+  const q = query.trim().toLowerCase();
   const searchFiltered = (featured ?? []).filter((s) =>
-    query
-      ? s.label.toLowerCase().includes(query.toLowerCase()) ||
-        s.weapon.toLowerCase().includes(query.toLowerCase())
-      : true
+    q ? s.label.toLowerCase().includes(q) || s.weapon.toLowerCase().includes(q) : true
   );
-  const visibleSkins = searchFiltered.filter(matchesWeaponTab);
+  // Like the designer: a search shows matches across every weapon.
+  const visibleSkins = q
+    ? searchFiltered
+    : searchFiltered.filter((s) =>
+        !weaponTab ? isFeatured(s) : weaponTab === "Melee" ? isMelee(s.weapon) : s.weapon.toLowerCase() === weaponTab.toLowerCase()
+      );
 
-  // Weapon tab counts (post-search, so when you type "reaver" the counts
-  // reflect what's actually matched).
   const weaponTabs: Array<{ label: string; count: number }> = [
-    { label: "Featured", count: searchFiltered.filter((s) => s.tier === "Ultra" || s.tier === "Exclusive").length },
-    { label: "Melee",    count: searchFiltered.filter((s) => isMelee(s.weapon)).length },
+    { label: "Featured", count: searchFiltered.filter(isFeatured).length },
+    { label: "Melee", count: searchFiltered.filter((s) => isMelee(s.weapon)).length },
+    ...GUNS.map((g) => ({ label: g, count: searchFiltered.filter((s) => s.weapon.toLowerCase() === g.toLowerCase()).length }))
+      .filter((t) => t.count > 0),
   ];
-  const weaponsSeen = new Map<string, number>();
-  for (const s of searchFiltered) {
-    if (isMelee(s.weapon)) continue;
-    weaponsSeen.set(s.weapon, (weaponsSeen.get(s.weapon) ?? 0) + 1);
-  }
-  const ORDERED_WEAPONS = ["Vandal", "Phantom", "Operator", "Sheriff", "Ghost", "Classic", "Spectre", "Bulldog", "Guardian", "Marshal", "Judge", "Bucky", "Stinger", "Ares", "Odin", "Shorty", "Frenzy", "Outlaw"];
-  for (const w of ORDERED_WEAPONS) {
-    const c = weaponsSeen.get(w);
-    if (c && c > 0) weaponTabs.push({ label: w, count: c });
-  }
-  // Catch-all for weapons we didn't pre-order
-  for (const [w, c] of weaponsSeen.entries()) {
-    if (!ORDERED_WEAPONS.includes(w)) weaponTabs.push({ label: w, count: c });
-  }
+
+  // Skin auto-select lives here (not in SkinGrid) so it runs AFTER the
+  // mode/region reset effect above — effects in one component run in
+  // order, so this always wins and the side panel is never left empty.
+  const skinPageCount = Math.max(1, Math.ceil(visibleSkins.length / SKINS_PER_PAGE));
+  const skinPageIdx = Math.min(skinPage, skinPageCount - 1);
+  const skinSlice = visibleSkins.slice(skinPageIdx * SKINS_PER_PAGE, skinPageIdx * SKINS_PER_PAGE + SKINS_PER_PAGE);
+  const skinSliceKey = skinSlice.map((x) => x.key).join("|");
+  useEffect(() => {
+    if (mode !== "skin" || skinSlice.length === 0) return;
+    if (sel?.kind === "skin" && skinSlice.some((x) => x.key === sel.row.key)) return;
+    setSel({ kind: "skin", row: skinSlice[0] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, region, skinSliceKey, sel]);
 
   const regionTotal = visibleBrackets.reduce((a, b) => a + b.available, 0);
 
@@ -737,64 +729,33 @@ function StockTab({ me }: { me: Me }) {
         {/* Headline row */}
         <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
           <span className="h num" style={{ fontSize: "28px" }}>
-            {mode === "bracket" ? regionTotal : visibleSkins.length}{" "}
-            <span style={{ color: "var(--vu-mute)", fontSize: "20px" }}>
-              {mode === "bracket" ? "accounts" : "matching skins"} · {REGION_NAME[region]}
-            </span>
+            {regionTotal}{" "}
+            <span style={{ color: "var(--vu-mute)", fontSize: "20px" }}>accounts · {REGION_NAME[region]}</span>
           </span>
           {subDiscountPct > 0 && me.sub && (
-            <span className="pill g">
-              {TIER_LABEL[me.sub.tier]} −{subDiscountPct}% applied
-            </span>
+            <span className="pill g">{TIER_LABEL[me.sub.tier]} −{subDiscountPct}% applied</span>
           )}
           <div style={{ flex: 1, minWidth: 12 }} />
           {mode === "skin" && (
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
-              {/* Popular-query chips — one-click search shortcuts. Click
-                  the active one to clear the search. */}
-              {["champ", "kuro", "reaver"].map((q) => {
-                const active = query.toLowerCase() === q;
-                return (
-                  <button
-                    key={q}
-                    className="chip"
-                    onClick={() => setQuery(active ? "" : q)}
-                    style={{
-                      cursor: "pointer",
-                      background: active ? "var(--vu-navy)" : "var(--vu-divider)",
-                      color: active ? "#fff" : "#334155",
-                      border: 0,
-                      textTransform: "lowercase",
-                      letterSpacing: "0.02em",
-                      fontWeight: 600,
-                      transition: "background-color 140ms, color 140ms",
-                    }}
-                    title={active ? "Clear search" : `Search "${q}"`}
-                  >
-                    {q}
-                  </button>
-                );
-              })}
-              <div style={{ position: "relative", width: "230px", maxWidth: "100%" }}>
-                <svg
-                  width="16" height="16" viewBox="0 0 24 24" fill="none"
-                  stroke="#8b97a5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                  aria-hidden="true"
-                  style={{ position: "absolute", left: "10px", top: "11px", pointerEvents: "none" }}
-                >
-                  <circle cx="11" cy="11" r="8" />
-                  <path d="m21 21-4.3-4.3" />
-                </svg>
-                <input
-                  className="inp"
-                  type="search"
-                  placeholder="Search named skins…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  style={{ height: "38px", paddingLeft: "34px" }}
-                  aria-label="Search skins"
-                />
-              </div>
+            <div style={{ position: "relative", width: "230px", maxWidth: "100%" }}>
+              <svg
+                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="#8b97a5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                aria-hidden="true"
+                style={{ position: "absolute", left: "10px", top: "11px", pointerEvents: "none" }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <input
+                className="inp"
+                type="search"
+                placeholder="Search named skins…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                style={{ height: "38px", paddingLeft: "34px" }}
+                aria-label="Search skins"
+              />
             </div>
           )}
         </div>
@@ -847,6 +808,8 @@ function StockTab({ me }: { me: Me }) {
               ) : (
                 <SkinGrid
                   visibleSkins={visibleSkins}
+                  searching={q}
+                  onClearSearch={() => setQuery("")}
                   weaponTabs={weaponTabs}
                   weaponTab={weaponTab}
                   onWeaponTab={setWeaponTab}
@@ -1119,10 +1082,12 @@ function StockTab({ me }: { me: Me }) {
 // ---- Skin grid with weapon sub-tabs + auto-select + entrance animation ----
 
 function SkinGrid({
-  visibleSkins, weaponTabs, weaponTab, onWeaponTab,
+  visibleSkins, searching, onClearSearch, weaponTabs, weaponTab, onWeaponTab,
   region, skinPage, setSkinPage, sel, setSel,
 }: {
   visibleSkins: FeaturedSkinRow[];
+  searching: string;
+  onClearSearch: () => void;
   weaponTabs: Array<{ label: string; count: number }>;
   weaponTab: string;
   onWeaponTab: (t: string) => void;
@@ -1133,120 +1098,71 @@ function SkinGrid({
   setSel: (s: Selected | null) => void;
 }) {
   const totalPages = Math.max(1, Math.ceil(visibleSkins.length / SKINS_PER_PAGE));
-  const page = Math.min(skinPage, Math.max(0, totalPages - 1));
-  const start = page * SKINS_PER_PAGE;
-  const slice = visibleSkins.slice(start, start + SKINS_PER_PAGE);
+  const page = Math.min(skinPage, totalPages - 1);
+  const slice = visibleSkins.slice(page * SKINS_PER_PAGE, page * SKINS_PER_PAGE + SKINS_PER_PAGE);
 
-  // Auto-select the first tile of the current slice whenever the page or
-  // filter changes — sidebar is never empty if there's stock. Preserve
-  // user's active selection if it's still visible on this page.
-  useEffect(() => {
-    if (slice.length === 0) return;
-    const currentVisible = slice.some(
-      (s) => sel?.kind === "skin" && sel.row.label === s.label
+  if (searching && visibleSkins.length === 0) {
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", textAlign: "center" }} className="mut">
+        <span className="h" style={{ fontSize: "22px", color: "var(--vu-navy)" }}>No skins match “{searching}”</span>
+        <span>Try another name, or clear the search.</span>
+        <button className="btn btn-soft cs" style={{ height: "36px", fontSize: "15px", marginTop: "4px" }} onClick={onClearSearch}>
+          Clear search
+        </button>
+      </div>
     );
-    if (!currentVisible) {
-      setSel({ kind: "skin", row: slice[0] });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    // `sel` is in the deps because the parent clears the selection on
-    // mode/region change AFTER this effect runs (parent effects fire after
-    // child effects), which used to leave the side panel empty.
-  }, [page, weaponTab, visibleSkins.length === 0 ? 0 : visibleSkins[0]?.label, region, sel === null || sel.kind !== "skin"]);
-
-  // Bump a keyframe key when the slice changes so each tile's rise-in
-  // entrance animation replays. React keys on the grid container.
-  const pageKey = `${region}:${weaponTab}:${page}`;
-
+  }
   if (visibleSkins.length === 0) {
     return <EmptyState region={region} forSkins />;
   }
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: "10px" }}>
-      {/* Weapon sub-tabs */}
-      <div className="seg" role="group" aria-label="Weapon" style={{ flexWrap: "wrap", alignSelf: "flex-start" }}>
-        {weaponTabs.map((w) => {
-          const label = w.label === "Featured" ? "" : w.label;
-          const active = weaponTab === label;
-          return (
-            <button
-              key={w.label}
-              className={active ? "on" : ""}
-              onClick={() => onWeaponTab(label)}
-              disabled={w.count === 0}
-              title={w.count === 0 ? "No stock in this weapon class" : undefined}
-            >
-              {w.label} <span className="c num">{w.count}</span>
-            </button>
-          );
-        })}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <div className="seg" role="group" aria-label="Weapon" style={{ flexWrap: "wrap" }}>
+          {weaponTabs.map((w) => {
+            const value = w.label === "Featured" ? "" : w.label;
+            return (
+              <button key={w.label} className={!searching && weaponTab === value ? "on" : ""} onClick={() => { onClearSearch(); onWeaponTab(value); }}>
+                {w.label} <span className="c num">{w.count}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ flex: 1 }} />
+        {searching && <span className="mut" style={{ fontSize: "12px" }}>Showing all weapons for “{searching}”</span>}
       </div>
 
-      {/* Grid */}
       <div
-        key={pageKey}
-        className="skin-grid-rise"
+        key={`${region}:${weaponTab}:${searching}:${page}`}
         style={{
           flex: 1,
           minHeight: 0,
           display: "grid",
           gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-          gridTemplateRows: "repeat(3, minmax(0, 1fr))",
+          gridTemplateRows: "repeat(2, minmax(0, 1fr))",
           gap: "10px",
         }}
       >
-        {slice.map((s, i) => (
-          <div
+        {slice.map((s) => (
+          <SkinTile
             key={s.key}
-            style={{
-              // Stagger each tile's entrance animation by ~40ms so the
-              // whole page doesn't fade in as one block.
-              animation: "skin-rise 420ms cubic-bezier(.2,.8,.2,1) both",
-              animationDelay: `${i * 40}ms`,
-              minWidth: 0,
-              minHeight: 0,
-              width: "100%",
-              height: "100%",
-              display: "flex",
-            }}
-          >
-            <SkinTile
-              row={s}
-              region={region}
-              selected={sel?.kind === "skin" && sel.row.label === s.label}
-              onPick={() => setSel({ kind: "skin", row: s })}
-            />
-          </div>
+            row={s}
+            region={region}
+            selected={sel?.kind === "skin" && sel.row.key === s.key}
+            onPick={() => setSel({ kind: "skin", row: s })}
+          />
         ))}
       </div>
 
-      {/* Pager */}
-      <div
-        style={{
-          flex: "none",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <button
-          className="btn btn-soft cs"
-          style={{ height: "34px", fontSize: "15px" }}
-          onClick={() => setSkinPage((p) => Math.max(0, p - 1))}
-          disabled={page === 0}
-        >
+      <div style={{ flex: "none", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button className="btn btn-soft cs" style={{ height: "34px", fontSize: "15px" }} onClick={() => setSkinPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
           ← Prev
         </button>
         <span className="bc num" style={{ fontWeight: 600, fontSize: "15px" }}>
           Page {page + 1} of {totalPages} · {visibleSkins.length} skins
         </span>
-        <button
-          className="btn btn-soft cs"
-          style={{ height: "34px", fontSize: "15px" }}
-          onClick={() => setSkinPage((p) => Math.min(totalPages - 1, p + 1))}
-          disabled={page >= totalPages - 1}
-        >
+        <button className="btn btn-soft cs" style={{ height: "34px", fontSize: "15px" }} onClick={() => setSkinPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>
           Next →
         </button>
       </div>
@@ -1381,6 +1297,12 @@ function BracketTile({
   );
 }
 
+// "Elderflame Frenzy" + "Frenzy" → "Elderflame"
+function skinShortName(label: string, weapon: string): string {
+  const suffix = ` ${weapon}`;
+  return label.toLowerCase().endsWith(suffix.toLowerCase()) ? label.slice(0, -suffix.length) : label;
+}
+
 function SkinTile({
   row, region, selected, onPick,
 }: {
@@ -1390,163 +1312,58 @@ function SkinTile({
   onPick: () => void;
 }) {
   const soldOut = row.available === 0;
-  const hasDiscount = row.discountPct > 0;
-  // Prefer real tier color from valorant-api; fall back to inferred.
-  const tc = row.tierColor
-    ?? (row.label.includes("Elderflame") || row.label.includes("Araxys")
-        ? "var(--tier-ultra)"
-        : row.label.includes("Oni") || row.label.includes("Reaver") || row.label.includes("Prime")
-        ? "var(--tier-premium)"
-        : row.label.includes("RGX") || row.label.includes("Glitchpop")
-        ? "var(--tier-exclusive)"
-        : "var(--tier-standard)");
-
+  const tc = row.tierColor ?? "var(--tier-standard)";
+  const hot = row.available >= 10;
+  const stkCls = soldOut ? "out" : row.available < 5 ? "low" : "ok";
   return (
     <button
       disabled={soldOut}
       onClick={onPick}
       className={`tile cs ${selected ? "on" : ""}`}
-      style={{ ["--tc" as string]: tc, width: "100%", height: "100%" }}
-      aria-label={`${row.label} ${row.weapon}, from €${eur(row.finalCents)}`}
+      style={{ ["--tc" as string]: tc }}
+      aria-label={`${row.label}, from €${eur(row.finalCents)}`}
     >
       <span className="glow" />
-      {/* Tier ribbon top-left (ULTRA / EXCLUSIVE / PREMIUM / SELECT) +
-          HOT chip for in-stock skins, mirrors the designer. */}
-      {row.tier && (
-        <span className="tier-ribbon">
-          {row.tierIcon ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={row.tierIcon}
-              alt=""
-              style={{ width: "11px", height: "11px", objectFit: "contain" }}
-            />
-          ) : (
-            <span style={{ fontSize: "9px", opacity: 0.9 }}>◆</span>
-          )}
-          <span>{row.tier}</span>
-          {!soldOut && (
-            <span
-              style={{
-                marginLeft: "4px",
-                background: "#ffd400",
-                color: "#111",
-                fontWeight: 900,
-                fontSize: "9px",
-                letterSpacing: "0.1em",
-                padding: "1px 5px 1px 4px",
-                clipPath: "polygon(0 0, 100% 0, calc(100% - 3px) 100%, 0 100%)",
-              }}
-            >
-              HOT
+      <span style={{ position: "relative", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px 0" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          {row.tier && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+              {row.tierIcon && <img src={row.tierIcon} alt="" style={{ width: "16px", height: "16px" }} />}
+              <span className="bc" style={{ fontSize: "12px", fontWeight: 600, color: tc }}>{row.tier}</span>
             </span>
           )}
+          {hot && (
+            <span className="bc" style={{ fontSize: "10px", fontWeight: 700, color: "#0f1923", background: "#ffd400", padding: "1px 5px" }}>Hot</span>
+          )}
         </span>
-      )}
-      <span
-        style={{
-          position: "relative",
-          display: "flex",
-          justifyContent: "flex-end",
-          alignItems: "center",
-          padding: "8px 10px 0",
-          minHeight: "28px",
-        }}
-      >
         <span className="rg">{region}</span>
       </span>
-      <span
-        style={{
-          position: "relative",
-          flex: 1,
-          minHeight: "34px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "2px 14px",
-          textAlign: "center",
-        }}
-      >
+      <span style={{ position: "relative", flex: 1, minHeight: "34px", display: "flex", alignItems: "center", justifyContent: "center", padding: "2px 14px" }}>
         {row.icon ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             className="gun"
             src={row.icon}
-            alt={`${row.label} ${row.weapon}`}
-            style={{
-              width: "100%",
-              height: "100%",
-              maxHeight: "66px",
-              objectFit: "contain",
-              filter: "drop-shadow(0 4px 6px rgba(0,0,0,0.5))",
-            }}
+            alt=""
+            style={{ width: "100%", height: "100%", maxHeight: "66px", objectFit: "contain", filter: "drop-shadow(0 4px 6px rgba(0,0,0,0.5))" }}
           />
         ) : (
-          <span className="h" style={{ fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>
-            {row.label}
-          </span>
+          <span className="h" style={{ fontSize: "20px", color: "#fff" }}>{row.label}</span>
         )}
       </span>
-      <span
-        style={{
-          position: "relative",
-          display: "flex",
-          justifyContent: "space-between",
-          padding: "0 10px 6px",
-          fontSize: "11px",
-          color: "var(--vu-ivory-dim)",
-        }}
-      >
-        <span>
-          Matching stock{" "}
-          <b
-            className={`num stk ${soldOut ? "out" : row.available < 3 ? "low" : "ok"}`}
-            style={{ padding: "1px 5px" }}
-          >
-            {row.available}
-          </b>
-        </span>
+      <span style={{ position: "relative", display: "flex", justifyContent: "space-between", padding: "0 10px 6px", fontSize: "11px", color: "#9aa5b1" }}>
+        <span>Matching stock <b className={`num stk ${stkCls}`}>{row.available}</b></span>
         <span>Instant</span>
       </span>
-      <span className="strip skin-strip">
-        <span style={{ minWidth: 0, display: "flex", flexDirection: "column", lineHeight: 1.05 }}>
-          <span className="bc" style={{ fontSize: "9.5px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.16em", textTransform: "uppercase" }}>
-            {row.weapon}
-          </span>
-          <span
-            className="bc"
-            style={{
-              fontWeight: 800,
-              fontSize: "14px",
-              color: "#fff",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-            }}
-          >
-            {/* Strip weapon from label so "Phaseguard Ghost" → "Phaseguard". */}
-            {row.label.endsWith(` ${row.weapon}`)
-              ? row.label.slice(0, -row.weapon.length - 1)
-              : row.label}
+      <span className="strip">
+        <span style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <span className="bc" style={{ fontSize: "11px", color: "#9aa5b1", lineHeight: 1.1 }}>{row.weapon}</span>
+          <span className="bc" style={{ fontWeight: 700, fontSize: "16px", color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.1 }}>
+            {skinShortName(row.label, row.weapon)}
           </span>
         </span>
-        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1 }}>
-          {soldOut ? (
-            <span className="bc" style={{ fontSize: "12px", color: "#f87171", fontWeight: 700 }}>
-              Sold out
-            </span>
-          ) : (
-            <>
-              <span className="bc" style={{ fontSize: "9px", fontWeight: 700, color: "var(--vu-ivory-dim)", letterSpacing: "0.18em", marginBottom: "2px" }}>
-                FROM
-              </span>
-              <span className="bc num" style={{ fontWeight: 800, fontSize: "17px", color: "#fff" }}>
-                €{eur(row.finalCents)}
-              </span>
-            </>
-          )}
+        <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+          <span className="bc" style={{ fontSize: "11px", color: "#9aa5b1", lineHeight: 1.1 }}>from</span>
+          <span className="bc num" style={{ fontWeight: 700, fontSize: "20px", color: "#fff", lineHeight: 1.1 }}>€{eur(row.finalCents)}</span>
         </span>
       </span>
     </button>

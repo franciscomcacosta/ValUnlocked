@@ -287,7 +287,7 @@ input, select, textarea {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 6px 10px;
   background: rgba(15, 25, 35, 0.72);
 }
 /* Edge-to-edge solid strip used on SkinTile only (matches the
@@ -824,9 +824,6 @@ main > div { animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 @media (prefers-reduced-motion: reduce) {
   .tile, .rise, .tile.on .glow { animation: none !important; }
 }
-/* Named-drops grid already staggers its wrappers (skin-rise); don't pop
-   the tile inside a second time. */
-.skin-grid-rise .tile { animation: none; }
 /* Header credit chip → top-up */
 .credit-chip { transition: background-color 140ms; }
 .credit-chip:hover { background: rgba(255,212,0,0.22) !important; }

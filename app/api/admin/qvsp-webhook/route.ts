@@ -23,10 +23,37 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "Set QVSP_WEBHOOK_TOKEN and PUBLIC_BASE_URL on Vercel first" }, { status: 400 });
   }
   const url = `${base.replace(/\/$/, "")}/api/webhooks/qvsp?token=${encodeURIComponent(token)}`;
-  const set = await qvspRaw("/webhook", { method: "PUT", json: { webhook_url: url, url } });
+
+  // qvsp sits behind Cloudflare, which blocked a PUT with an HTML
+  // challenge page. Try POST first (also listed for /webhook), then PUT,
+  // with the minimal body; report each attempt in plain words.
+  const attempts: Array<{ method: string; status: number; ok: boolean; note: string }> = [];
+  let set: Awaited<ReturnType<typeof qvspRaw>> = { ok: false, status: 0, body: null };
+  for (const method of ["POST", "PUT"] as const) {
+    set = await qvspRaw("/webhook", { method, json: { webhook_url: url } });
+    attempts.push({ method, status: set.status, ok: set.ok, note: describe(set.body) });
+    if (set.ok) break;
+  }
   const test = set.ok ? await qvspRaw("/webhook/test", { method: "POST", json: {} }) : null;
   const config = await qvspRaw("/webhook");
   // Never echo the token back.
   const redact = (v: unknown) => JSON.parse(JSON.stringify(v).split(token).join("•••"));
-  return Response.json({ ok: set.ok, set: redact(set), test: test && redact(test), config: redact(config) });
+  return Response.json({
+    ok: set.ok,
+    attempts: redact(attempts),
+    error: set.ok ? undefined : redact(attempts.map((a) => `${a.method} → ${a.status}: ${a.note}`).join(" · ")),
+    test: test && redact({ ok: test.ok, status: test.status, note: describe(test.body) }),
+    config: redact(config),
+  });
+}
+
+/** Short human-readable summary of a qvsp response (JSON or HTML page). */
+function describe(body: unknown): string {
+  if (typeof body === "string") {
+    const title = body.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim();
+    const cf = /cloudflare|cf-ray|attention required/i.test(body);
+    return `${cf ? "Cloudflare block page" : "HTML page"}${title ? ` ("${title}")` : ""}`;
+  }
+  const b = body as { error?: string; message?: string } | null;
+  return (b?.message || b?.error || JSON.stringify(body) || "").slice(0, 200);
 }

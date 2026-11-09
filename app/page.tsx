@@ -3434,7 +3434,7 @@ function AdminTab() {
     setBusy(true); setMsg("");
     try {
       const d = await fetch("/api/admin/qvsp-webhook", { method: "POST" }).then((r) => r.json());
-      setMsg(d.ok ? `Connected. Test event: ${d.test?.ok ? "delivered" : "sent (check staff log)"}.` : `Failed: ${d.error ?? JSON.stringify(d.set?.body ?? d).slice(0, 200)}`);
+      setMsg(d.ok ? `Connected. Test event: ${d.test?.ok ? "delivered" : "sent (check staff log)"}.` : `Failed — ${d.error ?? "unknown error"}`);
       load();
     } catch (e) {
       setMsg(String(e));

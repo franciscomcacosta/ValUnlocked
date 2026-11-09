@@ -510,6 +510,17 @@ function StockTab({ me }: { me: Me }) {
 
   const visibleBrackets = (brackets ?? []).filter((b) => b.region === region);
 
+  // Bracket auto-select — mirror the skin-grid behaviour: whenever the
+  // bracket data loads for the current region, pick the first available
+  // one so the checkout panel never sits empty.
+  useEffect(() => {
+    if (mode !== "bracket") return;
+    if (sel && sel.kind === "bracket" && visibleBrackets.some((b) => b.bracket === sel.row.bracket)) return;
+    const firstAvailable = visibleBrackets.find((b) => b.available > 0);
+    if (firstAvailable) setSel({ kind: "bracket", row: firstAvailable });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, region, visibleBrackets.length, visibleBrackets[0]?.bracket]);
+
   // --- Skin tab filters: search + weapon sub-tab ---
   const MELEE_WEAPONS = ["Knife", "Melee", "Karambit", "Kunai", "Dagger", "Sword", "Claw", "Axe", "Blade"];
   function isMelee(weapon: string): boolean {
@@ -594,7 +605,12 @@ function StockTab({ me }: { me: Me }) {
         kind: "bracket" as const,
         range: sel.row.label,
         tc: bracketTierColor(sel.row.label),
+        // Name shown in the title row under the hero. Just the range —
+        // the hero already says "Skins · random account" so appending
+        // "skins" again would read "1-25 Skins" (above) then "1-25 skins
+        // skins" (below).
         name: `${sel.row.label} skins`,
+        titleName: `${sel.row.label}`,      // ← used under the hero, no "skins" tail
         oldCents: sel.row.price.publicCents,
         finalCents: sel.row.price.finalCents,
         saveCents: sel.row.price.savingsCents,
@@ -604,9 +620,15 @@ function StockTab({ me }: { me: Me }) {
         tierLabel: null as string | null,
       };
     }
+    // Skin name: if the label already ends with the weapon ("Prime Vandal"
+    // + weapon "Vandal"), use the label alone to avoid "Prime Vandal Vandal".
+    const skinName = sel.row.label.endsWith(` ${sel.row.weapon}`)
+      ? sel.row.label
+      : `${sel.row.label} ${sel.row.weapon}`;
     return {
       kind: "skin" as const,
-      name: `${sel.row.label} ${sel.row.weapon}`,
+      name: skinName,
+      titleName: skinName,
       tc: sel.row.tierColor ?? "var(--tier-premium)",
       oldCents: sel.row.publicCents,
       finalCents: sel.row.finalCents,
@@ -938,7 +960,14 @@ function StockTab({ me }: { me: Me }) {
                 gap: "8px",
               }}
             >
-              <span className="h" style={{ fontSize: "22px" }}>{selDisplay.name}</span>
+              <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                <span className="h" style={{ fontSize: "22px" }}>{selDisplay.titleName}</span>
+                {selDisplay.kind === "bracket" && selDisplay.range === "1-25" && (
+                  <span className="bc" style={{ fontSize: "11px", color: "var(--accent-success)", letterSpacing: "0.1em" }}>
+                    Always includes a shop skin
+                  </span>
+                )}
+              </span>
               <span className="rg" style={{ background: "var(--vu-navy)" }}>{region}</span>
             </div>
 
@@ -1239,6 +1268,20 @@ function BracketTile({
         >
           {vis.label} · Skins
         </span>
+        {row.label === "1-25" && (
+          <span
+            className="bc"
+            style={{
+              fontSize: "10px",
+              fontWeight: 700,
+              color: "var(--accent-success)",
+              letterSpacing: "0.12em",
+              marginTop: "4px",
+            }}
+          >
+            ★ Always includes a shop skin
+          </span>
+        )}
       </span>
       <span
         style={{

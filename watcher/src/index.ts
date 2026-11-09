@@ -187,7 +187,7 @@ let interval = BASE_INTERVAL;
 
 async function pass() {
   const now = new Date().toISOString();
-  const upserts: ReturnType<typeof toRow>[] = [];
+  const upserts: Array<ReturnType<typeof toRow> & { public_at?: string }> = [];
   const removedIds: string[] = [];
   const drops: Array<{ region: string; skin: string; tier: string; skins: number }> = [];
   const byRegion: Record<string, { added: number; removed: number }> = {};
@@ -217,28 +217,38 @@ async function pass() {
       emptyStreak.set(region, 0);
     }
 
-    const fresh = new Set<string>();
+    const freshIds = new Set(items.filter((i) => i.kind === "skinned").map((i) => i.id));
+    const goneIds: string[] = [];
+    for (const [id, k] of known) if (k.region === region && !freshIds.has(id)) goneIds.push(id);
+
+    // Resync guard: if most of a region's listings "disappear" at once,
+    // qvsp has re-keyed its stock (or our mirror was stale) — it's the same
+    // accounts, not a sell-out + mass restock. Treat the new ids as existing
+    // stock: visible immediately (no 2h early-access window) and no
+    // "New drop" broadcasts.
+    const resync = prevCount > 20 && goneIds.length / prevCount >= 0.5;
+    if (resync) console.warn(`[watcher] ${region}: ${goneIds.length}/${prevCount} ids changed — resync, not drops`);
+
     const reg = { added: 0, removed: 0 };
     for (const item of items) {
       if (item.kind !== "skinned") continue;
-      fresh.add(item.id);
       const row = toRow(item, now);
       const prev = known.get(item.id);
       if (!prev) {
-        upserts.push(row);
-        reg.added++;
-        const h = headlineSkin(item);
-        if (h) drops.push({ region: item.region, skin: h.skin, tier: h.tier, skins: item.skin_count ?? 0 });
+        upserts.push(resync ? { ...row, public_at: now } : row);
+        if (!resync) {
+          reg.added++;
+          const h = headlineSkin(item);
+          if (h) drops.push({ region: item.region, skin: h.skin, tier: h.tier, skins: item.skin_count ?? 0 });
+        }
       } else if (prev.fp !== fingerprint(row)) {
         upserts.push(row);
         stats.changed++;
       }
     }
-    for (const [id, k] of known) {
-      if (k.region === region && !fresh.has(id)) {
-        removedIds.push(id);
-        reg.removed++;
-      }
+    for (const id of goneIds) {
+      removedIds.push(id);
+      if (!resync) reg.removed++;
     }
     if (reg.added || reg.removed) byRegion[region.toUpperCase()] = reg;
   }
@@ -265,7 +275,7 @@ async function pass() {
   for (const id of removedIds) known.delete(id);
 
   const added = Object.values(byRegion).reduce((a, r) => a + r.added, 0);
-  const removed = removedIds.length;
+  const removed = Object.values(byRegion).reduce((a, r) => a + r.removed, 0);
   stats.passes++;
   stats.added += added;
   stats.removed += removed;

@@ -95,25 +95,36 @@ async function runSync() {
   // Mark rows removed from qvsp as such (they sold on their side, or were pulled).
   // We DON'T delete — we need the history for /mypurchases and audit.
   const liveIds = new Set(items.map((i) => i.id));
-  const { data: ours } = await db
-    .from("qvsp_stock")
-    .select("qvsp_id")
-    .is("removed_at", null)
-    .eq("claimed", false)
-    .is("reserved_order_id", null);
-  const toRemove = (ours ?? []).filter((r) => !liveIds.has(r.qvsp_id)).map((r) => r.qvsp_id);
+  // Page through ALL our live rows — Supabase returns at most 1000 per
+  // request, and checking only the first 1000 is what let stale listings
+  // (old qvsp ids for the same accounts) pile up as duplicates.
+  const ours: Array<{ qvsp_id: string }> = [];
+  for (let from = 0; ; from += 1000) {
+    const { data } = await db
+      .from("qvsp_stock")
+      .select("qvsp_id")
+      .is("removed_at", null)
+      .eq("claimed", false)
+      .is("reserved_order_id", null)
+      .order("qvsp_id")
+      .range(from, from + 999);
+    ours.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  const toRemove = ours.filter((r) => !liveIds.has(r.qvsp_id)).map((r) => r.qvsp_id);
 
   let removed = 0;
-  if (toRemove.length) {
+  for (let i = 0; i < toRemove.length; i += 300) {
+    const chunk = toRemove.slice(i, i + 300);
     const { error } = await db
       .from("qvsp_stock")
       .update({ removed_at: now })
-      .in("qvsp_id", toRemove);
+      .in("qvsp_id", chunk);
     if (error) {
       console.error("[sync-qvsp] mark removed failed", error);
-    } else {
-      removed = toRemove.length;
+      break;
     }
+    removed += chunk.length;
   }
 
   const elapsed = Date.now() - start;

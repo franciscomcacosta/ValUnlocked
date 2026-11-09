@@ -791,3 +791,39 @@ main > div { animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
     animation: none !important;
   }
 }
+
+/* === Designer tile behaviour (phase 2.18) ===
+   Tiles are <button>s: reset native chrome, add the designer's pop-in
+   entrance with a per-tile stagger, and the hover lift transition. */
+.tile {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  animation: pop 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transition: background-color 160ms, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tile .glow { transition: opacity 200ms; }
+.tile:nth-child(2) { animation-delay: 30ms; }
+.tile:nth-child(3) { animation-delay: 60ms; }
+.tile:nth-child(4) { animation-delay: 90ms; }
+.tile:nth-child(5) { animation-delay: 120ms; }
+.tile:nth-child(6) { animation-delay: 150ms; }
+.tile:nth-child(7) { animation-delay: 180ms; }
+.tile:nth-child(8) { animation-delay: 210ms; }
+.tile:nth-child(9) { animation-delay: 240ms; }
+.tile:nth-child(10) { animation-delay: 270ms; }
+.tile:nth-child(11) { animation-delay: 300ms; }
+.tile:nth-child(12) { animation-delay: 330ms; }
+
+/* X-Ray table rows: hover + selected transitions from the designer */
+.tbl.click tbody tr { cursor: pointer; transition: background-color 140ms; }
+.tbl tbody tr td { transition: background-color 140ms, color 140ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .rise, .tile.on .glow { animation: none !important; }
+}
+/* Named-drops grid already staggers its wrappers (skin-rise); don't pop
+   the tile inside a second time. */
+.skin-grid-rise .tile { animation: none; }

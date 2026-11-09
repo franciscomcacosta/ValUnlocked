@@ -21,6 +21,7 @@ export const runtime = "nodejs";
 
 import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
+import { parseExtraAutobuyFields, isMissingColumnError, withoutExtraColumns } from "@/lib/autobuy-fields";
 import type { SubTier } from "@/lib/pricing";
 
 async function requireUltra(uid: string): Promise<{ ok: true } | { ok: false; status: number; body: object }> {
@@ -78,9 +79,8 @@ export async function POST(req: Request) {
   const maxBuysPerDay = Math.min(20, Math.max(1, parseInt(String(body.max_buys_per_day ?? 5), 10) || 5));
   const minCreditCents = Math.max(0, parseInt(String(body.min_credit_cents ?? 5000), 10) || 5000);
 
-  const { data, error } = await db
-    .from("autobuy_configs")
-    .insert({
+  const row = {
+    ...{
       user_id: session.uid,
       name,
       active: true,
@@ -93,9 +93,14 @@ export async function POST(req: Request) {
       required_skins: requiredSkins,
       max_buys_per_day: maxBuysPerDay,
       min_credit_cents: minCreditCents,
-    })
-    .select()
-    .single();
+    },
+    ...parseExtraAutobuyFields(body),
+    active: body.active === false ? false : true,
+  };
+  let { data, error } = await db.from("autobuy_configs").insert(row).select().single();
+  if (error && isMissingColumnError(error.message)) {
+    ({ data, error } = await db.from("autobuy_configs").insert(withoutExtraColumns(row)).select().single());
+  }
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true, rule: data });
 }

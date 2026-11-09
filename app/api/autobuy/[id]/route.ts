@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 
 import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
+import { parseExtraAutobuyFields, isMissingColumnError, withoutExtraColumns } from "@/lib/autobuy-fields";
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const session = sessionFromRequest(req);
@@ -39,17 +40,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (v >= 0) patch.min_credit_cents = v;
   }
 
+  Object.assign(patch, parseExtraAutobuyFields(body));
+
   if (Object.keys(patch).length === 0) {
     return Response.json({ error: "nothing_to_update" }, { status: 400 });
   }
 
-  const { data, error } = await db
-    .from("autobuy_configs")
-    .update(patch)
-    .eq("id", id)
-    .eq("user_id", session.uid)   // enforces ownership
-    .select()
-    .single();
+  const run = (p: Record<string, unknown>) =>
+    db.from("autobuy_configs").update(p).eq("id", id).eq("user_id", session.uid).select().single();
+  let { data, error } = await run(patch);
+  if (error && isMissingColumnError(error.message)) {
+    const rest = withoutExtraColumns(patch);
+    if (Object.keys(rest).length > 0) ({ data, error } = await run(rest));
+  }
   if (error) return Response.json({ error: error.message }, { status: 500 });
   if (!data) return Response.json({ error: "not_found" }, { status: 404 });
   return Response.json({ ok: true, rule: data });

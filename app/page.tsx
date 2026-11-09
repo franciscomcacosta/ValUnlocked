@@ -175,8 +175,8 @@ export default function Page() {
           <SubscribeTab me={me} reload={() => window.location.reload()} />
         )}
         {tab === "purchases" && <PurchasesTab />}
-        {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} />}
-        {tab === "autobuy" && <AutobuyTab isUltra={isUltra} onSub={() => setTab("subscribe")} />}
+        {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} onOrders={() => setTab("purchases")} />}
+        {tab === "autobuy" && <AutobuyTab me={me} isUltra={isUltra} onSub={() => setTab("subscribe")} />}
         {tab === "admin" && me.isAdmin && <AdminTab />}
       </main>
     </div>
@@ -1117,7 +1117,10 @@ function SkinGrid({
       setSel({ kind: "skin", row: slice[0] });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, weaponTab, visibleSkins.length === 0 ? 0 : visibleSkins[0]?.label, region]);
+    // `sel` is in the deps because the parent clears the selection on
+    // mode/region change AFTER this effect runs (parent effects fire after
+    // child effects), which used to leave the side panel empty.
+  }, [page, weaponTab, visibleSkins.length === 0 ? 0 : visibleSkins[0]?.label, region, sel === null || sel.kind !== "skin"]);
 
   // Bump a keyframe key when the slice changes so each tile's rise-in
   // entrance animation replays. React keys on the grid container.
@@ -2059,27 +2062,30 @@ function orderPillClass(status: string): string {
 // X-RAY tab (Ultra-only)
 // ================================================================
 
-function XrayTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void }) {
+function XrayTab({
+  isUltra, onSub, onOrders,
+}: {
+  isUltra: boolean;
+  onSub: () => void;
+  onOrders: () => void;
+}) {
   if (!isUltra) {
     return (
       <LockedOverlay
-        title="X-RAY is Ultra-only"
+        title="X-Ray is Ultra-only"
         perks={[
-          "See every skin on every account before you buy",
-          "Pick the exact account you want",
-          "Auto-buy accounts matching your filters",
-          "Priority replacement handling",
+          "Full skin inventory per account",
+          "Current + peak rank visible",
+          "VP balance + buddies",
+          "Buy the exact account — no random pick",
         ]}
         onSub={onSub}
       >
-        {/* Live X-RAY UI running behind the blur, so non-Ultra users see
-            exactly what they're unlocking. It can't be interacted with
-            (pointer-events: none on the wrapper). */}
-        <XrayInspector />
+        <XrayInspector onOrders={onOrders} />
       </LockedOverlay>
     );
   }
-  return <XrayInspector />;
+  return <XrayInspector onOrders={onOrders} />;
 }
 
 // ---- X-RAY inspector --------------------------------------------
@@ -2090,6 +2096,12 @@ type XrayItem = {
   level: number;
   peak: string;
   rank: string;
+  rankIcon: string | null;
+  rankColor: string | null;
+  rankName: string | null;
+  peakIcon: string | null;
+  peakColor: string | null;
+  peakName: string | null;
   skin_count: number;
   skins: string[] | null;
   buddies: string[] | null;
@@ -2103,48 +2115,124 @@ type XrayItem = {
   discountPct: number;
 };
 
-type XraySort = "newest" | "cheapest" | "most_skins" | "highest_peak";
+type XraySort = "newest" | "cheapest" | "most_skins" | "highest_peak" | "highest_vp";
 
-function XrayInspector() {
+const XRAY_SORTS: Array<{ k: XraySort; l: string; asc: boolean }> = [
+  { k: "newest", l: "Newest", asc: false },
+  { k: "cheapest", l: "Cheapest", asc: true },
+  { k: "most_skins", l: "Most skins", asc: false },
+  { k: "highest_peak", l: "Highest peak", asc: false },
+  { k: "highest_vp", l: "Highest VP", asc: false },
+];
+
+const XRAY_ONBOARD = [
+  ["Filter & sort", "Narrow by region, min skins or a skin name. Click a sort twice to flip the direction."],
+  ["Inspect any account", "Click a row to see its full inventory, rank, VP and buddies in the side panel."],
+  ["Buy the exact one", "No random pick — hit Buy on the account you actually want."],
+  ["Automate it", "Set up an Auto-buy rule and the bot grabs matching drops for you."],
+];
+
+const ULTRA_TIER_ICON =
+  "https://media.valorant-api.com/contenttiers/411e4a55-4e59-7757-41f0-86a53f101bb5/displayicon.png";
+
+// Readable rank colour on white (valorant-api's rank colours are pastel).
+function rankTextColor(name: string | null | undefined): string {
+  const n = (name ?? "").toLowerCase();
+  if (n.startsWith("radiant")) return "#b59a00";
+  if (n.startsWith("immortal")) return "#bb3d65";
+  if (n.startsWith("ascendant")) return "#1f9d6e";
+  if (n.startsWith("diamond")) return "#8e5aa3";
+  if (n.startsWith("platinum")) return "#2b8a9a";
+  if (n.startsWith("gold")) return "#b8860b";
+  if (n.startsWith("silver") || n.startsWith("bronze") || n.startsWith("iron")) return "#6b7280";
+  return "#5b6474";
+}
+
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const TIER_ORDER: Record<string, number> = { Ultra: 5, Exclusive: 4, Premium: 3, Deluxe: 2, Select: 1 };
+
+type SkinArtMap = Record<string, { icon: string | null; tier: string | null; tierColor: string | null }>;
+
+function XrayInspector({ onOrders }: { onOrders: () => void }) {
   const [region, setRegion] = useState<Region>("EU");
   const [minSkins, setMinSkins] = useState<string>("0");
   const [skinSearch, setSkinSearch] = useState<string>("");
   const [sort, setSort] = useState<XraySort>("newest");
+  const [asc, setAsc] = useState<boolean>(false);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: XrayItem[]; total: number; totalPages: number } | null>(null);
   const [selected, setSelected] = useState<XrayItem | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<"idle" | "processing" | "done">("idle");
   const [err, setErr] = useState<string>("");
+  const [art, setArt] = useState<SkinArtMap>({});
+  const [onboarded, setOnboarded] = useState<boolean>(true);
+
+  // First visit → show the "How it works" sheet once per browser.
+  useEffect(() => {
+    try { setOnboarded(localStorage.getItem("vu_xray_onboarded") === "1"); } catch { /* storage blocked */ }
+  }, []);
+  function finishOnboard() {
+    setOnboarded(true);
+    try { localStorage.setItem("vu_xray_onboarded", "1"); } catch { /* storage blocked */ }
+  }
 
   useEffect(() => {
-    const params = new URLSearchParams({
-      region,
-      page: String(page),
-      sort,
-    });
+    const params = new URLSearchParams({ region, page: String(page), sort, dir: asc ? "asc" : "desc" });
     const ms = parseInt(minSkins, 10) || 0;
     if (ms > 0) params.set("minSkins", String(ms));
     if (skinSearch.trim()) params.set("skin", skinSearch.trim());
 
     let cancelled = false;
-    setData(null);
-    fetch(`/api/stock/xray?${params}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled) return;
-        if (!d.ok) throw new Error(d.error);
-        setData({ items: d.items, total: d.total, totalPages: d.totalPages });
-        if (!selected && d.items.length > 0) setSelected(d.items[0]);
-      })
-      .catch((e) => { if (!cancelled) setData({ items: [], total: 0, totalPages: 0 }); setErr(String(e)); });
-    return () => { cancelled = true; };
-  }, [region, page, sort, minSkins, skinSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+    const h = setTimeout(() => {
+      setData(null);
+      fetch(`/api/stock/xray?${params}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (cancelled) return;
+          if (!d.ok) throw new Error(d.error);
+          setData({ items: d.items, total: d.total, totalPages: d.totalPages });
+          setSelected((cur) =>
+            cur && d.items.some((i: XrayItem) => i.account_id === cur.account_id) ? cur : d.items[0] ?? null
+          );
+        })
+        .catch(() => { if (!cancelled) setData({ items: [], total: 0, totalPages: 0 }); });
+    }, skinSearch ? 250 : 0);
+    return () => { cancelled = true; clearTimeout(h); };
+  }, [region, page, sort, asc, minSkins, skinSearch]);
 
-  // Reset to page 1 when filters change
-  useEffect(() => { setPage(1); }, [region, sort, minSkins, skinSearch]);
+  useEffect(() => { setPage(1); }, [region, sort, asc, minSkins, skinSearch]);
+  useEffect(() => { setStep("idle"); setErr(""); }, [selected?.account_id]);
+
+  // Resolve skin art for the inspected account only.
+  useEffect(() => {
+    const names = (selected?.skins ?? []).filter((n) => !(n in art));
+    if (names.length === 0) return;
+    let cancelled = false;
+    fetch("/api/stock/skin-art", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ names }),
+    })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled && d.ok) setArt((a) => ({ ...a, ...d.art })); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.account_id]);
+
+  function pickSort(k: XraySort) {
+    const def = XRAY_SORTS.find((s) => s.k === k)!.asc;
+    if (sort === k) setAsc((a) => !a);
+    else { setSort(k); setAsc(def); }
+  }
 
   async function buy(item: XrayItem) {
-    setBusy(true); setErr("");
+    if (step === "processing") return;
+    setSelected(item);
+    setStep("processing"); setErr("");
     try {
       const res = await fetch("/api/stock/buy", {
         method: "POST",
@@ -2153,278 +2241,324 @@ function XrayInspector() {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? "buy_failed");
-      if (d.invoiceUrl) window.location.href = d.invoiceUrl;
-      else window.location.href = `/orders/${d.orderId}`;
+      if (d.invoiceUrl) { window.location.href = d.invoiceUrl; return; }
+      setStep("done");
     } catch (e) {
+      setStep("idle");
       setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
     }
   }
 
-  return (
-    <div
-      style={{
-        height: "100%",
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1fr)",
-        gap: "16px",
-      }}
-    >
-      {/* LEFT: search + table */}
-      <section
-        className="pn cut"
-        style={{
-          padding: "16px 0 0",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-          minHeight: 0,
-        }}
-      >
-        <div style={{ padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
-          <span className="h" style={{ fontSize: "26px", color: "var(--vu-navy)" }}>
-            X-Ray <span style={{ color: "#c9a800" }}>terminal</span>
-          </span>
-          <div className="seg cy" role="group" aria-label="Region">
-            {REGIONS.map((r) => (
-              <button key={r} className={region === r ? "on" : ""} onClick={() => setRegion(r)}>
-                {REGION_NAME[r]}
-              </button>
-            ))}
-          </div>
-        </div>
+  const inventory = useMemo(() => {
+    const list = (selected?.skins ?? []).map((n) => {
+      const a = art[n];
+      return {
+        name: n.replace(/\s*\(.*\)\s*$/, ""),
+        icon: a?.icon ?? null,
+        tier: a?.tier ?? null,
+        tc: a?.tierColor ?? "#5b6474",
+      };
+    });
+    list.sort((p, q) => (TIER_ORDER[q.tier ?? ""] ?? 0) - (TIER_ORDER[p.tier ?? ""] ?? 0));
+    return list;
+  }, [selected, art]);
 
-        <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 110px auto", gap: "8px", alignItems: "end" }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              <span className="lbl" style={{ fontSize: "11px" }}>Skin search</span>
-              <input
-                className="inp"
-                type="search"
-                placeholder="e.g. Reaver, Elderflame…"
-                value={skinSearch}
-                onChange={(e) => setSkinSearch(e.target.value)}
-              />
-            </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              <span className="lbl" style={{ fontSize: "11px" }}>Min skins</span>
-              <input
-                className="inp num"
-                type="number"
-                min="0"
-                value={minSkins}
-                onChange={(e) => setMinSkins(e.target.value)}
-              />
-            </label>
-            <span className="bc num" style={{ height: "38px", display: "inline-flex", alignItems: "center", fontWeight: 700, fontSize: "18px", whiteSpace: "nowrap", color: "var(--vu-navy)" }}>
-              {data ? `${data.total} accounts` : "…"}
+  const totalPages = Math.max(1, data?.totalPages ?? 1);
+  const sel = selected;
+  const buyLabel = step === "processing" ? "Paying…" : step === "done" ? "Unlocked" : "Buy";
+
+  return (
+    <div style={{ height: "100%", position: "relative" }}>
+      <div style={{ height: "100%", display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1fr)", gap: "16px" }}>
+        {/* LEFT: filters + table */}
+        <section className="pn cut" style={{ padding: "16px 0 0", display: "flex", flexDirection: "column", gap: "10px", minHeight: 0 }}>
+          <div style={{ padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}>
+              <span className="h" style={{ fontSize: "26px", color: "var(--vu-navy)" }}>
+                X-Ray <span style={{ color: "#c9a800" }}>terminal</span>
+              </span>
+              <button
+                className="bc"
+                style={{ border: 0, background: "var(--vu-surface-alt)", color: "var(--vu-mute)", height: "26px", padding: "0 10px", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}
+                onClick={() => setOnboarded(false)}
+              >
+                How it works
+              </button>
             </span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <span className="lbl" style={{ fontSize: "11px" }}>Sort</span>
-            <div className="seg" role="group" aria-label="Sort" style={{ flexWrap: "wrap" }}>
-              {([
-                { k: "newest", l: "Newest" },
-                { k: "cheapest", l: "Cheapest" },
-                { k: "most_skins", l: "Most skins" },
-                { k: "highest_peak", l: "Highest peak" },
-              ] as const).map((o) => (
-                <button key={o.k} className={sort === o.k ? "on" : ""} onClick={() => setSort(o.k)}>
-                  {o.l}
+            <div className="seg cy" role="group" aria-label="Region">
+              {REGIONS.map((r) => (
+                <button key={r} className={region === r ? "on" : ""} onClick={() => setRegion(r)}>
+                  {REGION_NAME[r]}
                 </button>
               ))}
             </div>
           </div>
-        </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-          {data === null ? (
-            <div style={{ padding: "32px", textAlign: "center" }} className="mut bc">Searching…</div>
-          ) : data.items.length === 0 ? (
-            <div style={{ padding: "32px 16px", textAlign: "center" }} className="mut">
-              No accounts match these filters. Try a lower minimum or another region.
+          <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 110px auto", gap: "8px", alignItems: "end" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                <span className="lbl" style={{ fontSize: "11px" }}>Skin search</span>
+                <input className="inp" type="search" placeholder="e.g. Reaver, Elderflame…" value={skinSearch} onChange={(e) => setSkinSearch(e.target.value)} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                <span className="lbl" style={{ fontSize: "11px" }}>Min skins</span>
+                <input className="inp num" type="number" min="0" value={minSkins} onChange={(e) => setMinSkins(e.target.value)} />
+              </label>
+              <span className="bc num" style={{ height: "38px", display: "inline-flex", alignItems: "center", fontWeight: 700, fontSize: "18px", whiteSpace: "nowrap", color: "var(--vu-navy)" }}>
+                {data ? `${data.total} accounts` : "…"}
+              </span>
             </div>
-          ) : (
-            <table className="tbl click">
-              <thead>
-                <tr>
-                  <th style={{ paddingLeft: "16px" }}>Rank</th>
-                  <th>Peak</th>
-                  <th style={{ textAlign: "right" }}>Level</th>
-                  <th style={{ textAlign: "right" }}>Skins</th>
-                  <th style={{ textAlign: "right" }}>VP</th>
-                  <th style={{ textAlign: "right", paddingRight: "16px" }}>Price</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.items.map((a) => (
-                  <tr
-                    key={a.account_id}
-                    className={selected?.account_id === a.account_id ? "on" : ""}
-                    onClick={() => setSelected(a)}
-                  >
-                    <td style={{ paddingLeft: "16px" }}>
-                      <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span className="bc" style={{ fontWeight: 700, fontSize: "16px" }}>
-                          {a.rank || "Unranked"}
-                        </span>
-                        <span className="rg" style={{ background: "var(--vu-navy)" }}>{a.region}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <span className="lbl" style={{ fontSize: "11px" }}>Sort</span>
+              <div className="seg" role="group" aria-label="Sort" style={{ flexWrap: "wrap" }}>
+                {XRAY_SORTS.map((o) => {
+                  const on = sort === o.k;
+                  return (
+                    <button key={o.k} className={on ? "on" : ""} onClick={() => pickSort(o.k)}>
+                      {o.l}{" "}
+                      <span style={{ color: on ? (asc ? "#16a34a" : "#e11d48") : "transparent" }}>
+                        {on ? (asc ? "▲" : "▼") : "▼"}
                       </span>
-                    </td>
-                    <td className="mut" style={{ fontSize: "12px" }}>{a.peak || "—"}</td>
-                    <td className="num" style={{ textAlign: "right" }}>{a.level}</td>
-                    <td className="num" style={{ textAlign: "right", fontWeight: 700 }}>{a.skin_count}</td>
-                    <td className="num mut" style={{ textAlign: "right" }}>{a.vp ?? 0}</td>
-                    <td style={{ textAlign: "right", paddingRight: "16px" }}>
-                      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                        <span className="bc num" style={{ fontWeight: 700, fontSize: "16px", color: "#a68a00", lineHeight: 1 }}>
-                          €{eur(a.finalCents)}
-                        </span>
-                        {a.discountPct > 0 && (
-                          <span className="num mut" style={{ fontSize: "11px", textDecoration: "line-through" }}>
-                            €{eur(a.publicCents)}
-                          </span>
-                        )}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
 
-        {data && data.totalPages > 1 && (
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            {data === null ? (
+              <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="skel l" style={{ height: "42px" }} />
+                ))}
+              </div>
+            ) : data.items.length === 0 ? (
+              <div style={{ padding: "32px 16px", textAlign: "center" }} className="mut">
+                No accounts match these filters. Try a lower minimum or another region.
+              </div>
+            ) : (
+              <table className="tbl click">
+                <thead>
+                  <tr>
+                    <th style={{ paddingLeft: "16px" }}>Rank</th>
+                    <th>Peak</th>
+                    <th style={{ textAlign: "right" }}>Level</th>
+                    <th style={{ textAlign: "right" }}>Skins</th>
+                    <th style={{ textAlign: "right" }}>VP</th>
+                    <th style={{ textAlign: "right" }}>Price</th>
+                    <th style={{ paddingRight: "16px" }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.items.map((a) => {
+                    const on = sel?.account_id === a.account_id;
+                    return (
+                      <tr key={a.account_id} className={on ? "on" : ""} onClick={() => setSelected(a)}>
+                        <td style={{ paddingLeft: "16px" }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            {a.rankIcon && <img src={a.rankIcon} alt="" style={{ width: "26px", height: "26px" }} />}
+                            <span className="bc" style={{ fontWeight: 700, fontSize: "16px" }}>
+                              {a.rankName ?? titleCase(a.rank || "Unranked")}
+                            </span>
+                            <span className="rg" style={{ background: "var(--vu-navy)" }}>{a.region}</span>
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            {a.peakIcon && <img src={a.peakIcon} alt="" style={{ width: "20px", height: "20px" }} />}
+                            <span className="mut" style={{ fontSize: "12px" }}>{a.peakName ?? (titleCase(a.peak || "") || "—")}</span>
+                          </span>
+                        </td>
+                        <td className="num" style={{ textAlign: "right" }}>{a.level}</td>
+                        <td className="num" style={{ textAlign: "right", fontWeight: 700 }}>{a.skin_count}</td>
+                        <td className="num mut" style={{ textAlign: "right" }}>{(a.vp ?? 0).toLocaleString("en")}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                            <span className="bc num" style={{ fontWeight: 700, fontSize: "18px", color: on ? "#ffd400" : "#a68a00", lineHeight: 1 }}>
+                              €{eur(a.finalCents)}
+                            </span>
+                            {a.discountPct > 0 && (
+                              <span className="num mut" style={{ fontSize: "11px", textDecoration: "line-through" }}>
+                                €{eur(a.publicCents)}
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td style={{ paddingRight: "16px", textAlign: "right" }}>
+                          <button
+                            className="btn btn-red cs btn-sm"
+                            disabled={step === "processing"}
+                            onClick={(e) => { e.stopPropagation(); buy(a); }}
+                          >
+                            Buy
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
           <div style={{ flex: "none", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px 12px", borderTop: "1px solid var(--vu-divider)" }}>
             <button className="btn btn-soft cs btn-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
               ← Prev
             </button>
-            <span className="bc num" style={{ fontWeight: 600, fontSize: "15px" }}>
-              Page {page} of {data.totalPages}
-            </span>
-            <button className="btn btn-soft cs btn-sm" onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))} disabled={page >= data.totalPages}>
+            <span className="bc num" style={{ fontWeight: 600, fontSize: "15px" }}>Page {page} of {totalPages}</span>
+            <button className="btn btn-soft cs btn-sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
               Next →
             </button>
           </div>
-        )}
-      </section>
+        </section>
 
-      {/* RIGHT: inspector */}
-      <section className="pn cut" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0 }}>
-        {!selected ? (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }} className="mut">
-            Pick an account to inspect it.
-          </div>
-        ) : (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
-                <span className="h" style={{ fontSize: "28px", color: "var(--vu-navy)" }}>
-                  {selected.rank || "Unranked"}
-                </span>
-                <span className="mut num" style={{ fontSize: "12px" }}>
-                  {REGION_NAME[selected.region]} · <span className="mono">{selected.account_id.slice(0, 10)}…</span>
-                  {selected.first_seen_at && ` · listed ${timeAgo(selected.first_seen_at)}`}
-                </span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                <span className="h num" style={{ fontSize: "30px", color: "#a68a00" }}>
-                  €{eur(selected.finalCents)}
-                </span>
-                {selected.discountPct > 0 && (
-                  <span className="num" style={{ fontSize: "12px" }}>
-                    <span className="mut" style={{ textDecoration: "line-through" }}>
-                      €{eur(selected.publicCents)}
-                    </span>{" "}
-                    <span style={{ color: "var(--accent-success)", fontWeight: 600 }}>
-                      −{Math.round(selected.discountPct * 100)}%
-                    </span>
-                  </span>
-                )}
-              </div>
-              <button
-                className="btn btn-red cut"
-                style={{ height: "50px", minWidth: "120px" }}
-                onClick={() => buy(selected)}
-                disabled={busy}
-              >
-                {busy ? "…" : "Buy"}
-              </button>
+        {/* RIGHT: inspector */}
+        <section className="pn cut" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0 }}>
+          {!sel ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }} className="mut">
+              Pick an account to inspect it.
             </div>
-
-            {err && (
-              <div style={{ padding: "8px 12px", background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px" }}>
-                {err}
-              </div>
-            )}
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: "4px" }}>
-              {[
-                { k: "Level", v: String(selected.level), c: "var(--vu-navy)" },
-                { k: "Skins", v: String(selected.skin_count), c: "var(--vu-navy)" },
-                { k: "Peak", v: selected.peak || "—", c: "var(--vu-navy)" },
-                { k: "VP", v: String(selected.vp ?? 0), c: "var(--vu-mute)" },
-                { k: "VP €", v: selected.vp_value_cents ? `€${eur(selected.vp_value_cents)}` : "—", c: "var(--vu-mute)" },
-                { k: "Last played", v: selected.last_played ? timeAgo(selected.last_played) : "—", c: "var(--vu-mute)" },
-              ].map((s) => (
-                <div key={s.k} style={{ background: "var(--vu-surface-alt)", padding: "5px 8px", display: "flex", flexDirection: "column", minWidth: 0 }}>
-                  <span className="lbl" style={{ fontSize: "11px" }}>{s.k}</span>
-                  <span className="bc num" style={{ fontWeight: 700, fontSize: "18px", color: s.c, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {s.v}
+          ) : (
+            <div key={sel.account_id} className="rise" style={{ display: "flex", flexDirection: "column", gap: "12px", flex: 1, minHeight: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                {sel.rankIcon && <img src={sel.rankIcon} alt="" style={{ width: "52px", height: "52px" }} />}
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <span className="h" style={{ fontSize: "28px", color: rankTextColor(sel.rankName ?? sel.rank) }}>
+                    {sel.rankName ?? titleCase(sel.rank || "Unranked")}
+                  </span>
+                  <span className="mut num" style={{ fontSize: "12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {REGION_NAME[sel.region]} · <span className="mono">{sel.account_id.slice(0, 10)}</span>
+                    {sel.first_seen_at && ` · listed ${timeAgo(sel.first_seen_at)}`}
                   </span>
                 </div>
-              ))}
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span className="lbl" style={{ color: "var(--vu-navy)" }}>Inventory</span>
-              <span className="mut num" style={{ fontSize: "12px" }}>
-                {selected.skin_count} skins · every skin shown
-              </span>
-            </div>
-            <div
-              style={{
-                flex: 1,
-                minHeight: "90px",
-                overflowY: "auto",
-                display: "grid",
-                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-                gridAutoRows: "80px",
-                gap: "6px",
-                alignContent: "start",
-                paddingRight: "4px",
-              }}
-            >
-              {(selected.skins ?? []).slice(0, 60).map((s, i) => (
-                <div
-                  key={`${s}-${i}`}
-                  className="tile cs"
-                  style={{ ["--tc" as string]: "var(--tier-premium)", cursor: "default", height: "80px" }}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                  <span className="h num" style={{ fontSize: "30px", color: "#a68a00" }}>€{eur(sel.finalCents)}</span>
+                  {sel.discountPct > 0 && (
+                    <span className="num" style={{ fontSize: "12px" }}>
+                      <span className="mut" style={{ textDecoration: "line-through" }}>€{eur(sel.publicCents)}</span>{" "}
+                      <span style={{ color: "var(--accent-success)", fontWeight: 600 }}>−{Math.round(sel.discountPct * 100)}%</span>
+                    </span>
+                  )}
+                </div>
+                <button
+                  className="btn btn-red cut"
+                  style={{ height: "50px", minWidth: "120px" }}
+                  onClick={() => buy(sel)}
+                  disabled={step !== "idle"}
                 >
-                  <span className="glow" />
-                  <span style={{ position: "relative", flex: 1, minHeight: "16px", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 8px", textAlign: "center" }}>
-                    <span className="bc" style={{ fontSize: "11px", color: "#fff", fontWeight: 600, lineHeight: 1.15 }}>
-                      {s}
-                    </span>
-                  </span>
-                </div>
-              ))}
-              {(selected.skins ?? []).length > 60 && (
-                <div className="mut bc" style={{ gridColumn: "span 6", textAlign: "center", padding: "10px", fontSize: "12px" }}>
-                  +{(selected.skins ?? []).length - 60} more skins not shown
+                  {buyLabel}
+                </button>
+              </div>
+
+              {step === "done" && (
+                <div className="rise" style={{ display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", background: "var(--vu-navy)", color: "#fff" }}>
+                  <span className="bc" style={{ color: "#4ade80", fontWeight: 700, fontSize: "16px" }}>Unlocked</span>
+                  <span style={{ flex: 1, color: "var(--vu-ivory-dim)" }}>Login details are in My purchases.</span>
+                  <button className="btn btn-soft cs btn-sm" onClick={onOrders}>Open</button>
                 </div>
               )}
+              {err && (
+                <div className="rise" style={{ padding: "8px 12px", background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px" }}>
+                  {err}
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: "4px" }}>
+                {[
+                  { k: "Peak", v: sel.peakName ?? (titleCase(sel.peak || "") || "—"), c: rankTextColor(sel.peakName ?? sel.peak) },
+                  { k: "Level", v: String(sel.level ?? "—"), c: "var(--vu-navy)" },
+                  { k: "Skins", v: String(sel.skin_count), c: "var(--vu-navy)" },
+                  {
+                    k: "VP",
+                    v: sel.vp ? `${sel.vp.toLocaleString("en")}${sel.vp_value_cents ? ` ≈€${eur(sel.vp_value_cents)}` : ""}` : "0",
+                    c: sel.vp ? "#1d4ed8" : "#8b97a5",
+                  },
+                  { k: "Buddies", v: String(sel.buddies?.length ?? 0), c: "var(--vu-navy)" },
+                  { k: "Last played", v: sel.last_played ? (/^\d{4}-/.test(sel.last_played) ? timeAgo(sel.last_played) : sel.last_played) : "—", c: "var(--vu-navy)" },
+                ].map((s) => (
+                  <div key={s.k} style={{ background: "var(--vu-surface-alt)", padding: "5px 8px", display: "flex", flexDirection: "column", minWidth: 0 }}>
+                    <span className="lbl" style={{ fontSize: "11px" }}>{s.k}</span>
+                    <span className="bc num" title={s.v} style={{ fontWeight: 700, fontSize: "18px", color: s.c, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {s.v}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span className="lbl" style={{ color: "var(--vu-navy)" }}>Inventory</span>
+                <span className="mut num" style={{ fontSize: "12px" }}>{sel.skin_count} skins · every skin shown</span>
+              </div>
+              <div
+                style={{
+                  flex: 1, minHeight: "90px", overflowY: "auto", display: "grid",
+                  gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gridAutoRows: "80px",
+                  gap: "6px", alignContent: "start", paddingRight: "4px",
+                }}
+              >
+                {inventory.map((k, i) => (
+                  <div
+                    key={`${k.name}-${i}`}
+                    className="tile cs"
+                    title={k.name}
+                    style={{ ["--tc" as string]: k.tc, cursor: "default", height: "80px", animationDelay: `${Math.min(i, 24) * 20}ms` }}
+                  >
+                    <span className="glow" />
+                    <span style={{ position: "relative", flex: 1, minHeight: "16px", display: "flex", alignItems: "center", justifyContent: "center", padding: "3px 6px" }}>
+                      {k.icon ? (
+                        <img src={k.icon} alt="" loading="lazy" style={{ width: "100%", height: "100%", maxHeight: "40px", objectFit: "contain", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))" }} />
+                      ) : (
+                        <span className="bc" style={{ fontSize: "10px", color: "var(--vu-ivory-dim)", textAlign: "center", lineHeight: 1.1 }}>No art</span>
+                      )}
+                    </span>
+                    <span className="strip" style={{ padding: "3px 6px" }}>
+                      <span className="bc" style={{ fontWeight: 700, fontSize: "11px", color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {k.name}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </>
-        )}
-      </section>
+          )}
+        </section>
+      </div>
+
+      {!onboarded && (
+        <div style={{ position: "absolute", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,25,35,0.55)" }}>
+          <div role="dialog" aria-modal="true" aria-label="Welcome to X-Ray" className="cut rise" style={{ width: "540px", maxWidth: "100%", background: "#fff", display: "flex", flexDirection: "column" }}>
+            <div style={{ background: "var(--vu-navy)", color: "#fff", padding: "16px 20px", borderBottom: "3px solid #ffd400", display: "flex", alignItems: "center", gap: "12px" }}>
+              <img src={ULTRA_TIER_ICON} alt="" style={{ width: "34px", height: "34px" }} />
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <span className="h" style={{ fontSize: "26px" }}>Welcome to X-Ray</span>
+                <span className="num" style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>Ultra · see inside any account before you buy</span>
+              </div>
+            </div>
+            <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              {XRAY_ONBOARD.map(([t, d], i) => (
+                <div key={t} className="rise" style={{ display: "flex", gap: "12px", alignItems: "flex-start", animationDelay: `${120 + i * 70}ms` }}>
+                  <span className="cs bc" style={{ width: "26px", height: "26px", flex: "none", background: "#ffd400", color: "var(--vu-navy)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "15px" }}>
+                    {i + 1}
+                  </span>
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span style={{ fontWeight: 600 }}>{t}</span>
+                    <span className="mut" style={{ fontSize: "12px" }}>{d}</span>
+                  </div>
+                </div>
+              ))}
+              <button className="btn btn-gold cut btn-lg" onClick={finishOnboard}>Start browsing</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return iso;
   const m = Math.floor(ms / 60000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
@@ -2448,6 +2582,9 @@ type AutobuyRule = {
   max_price_cents: number;
   min_level: number | null;
   min_peak: string | null;
+  max_peak?: string | null;
+  min_vp?: number | null;
+  budget_cents?: number | null;
   required_skins: string[];
   max_buys_per_day: number;
   min_credit_cents: number;
@@ -2457,213 +2594,252 @@ type AutobuyRule = {
   created_at: string;
 };
 
-function AutobuyTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void }) {
+function AutobuyTab({
+  me, isUltra, onSub,
+}: {
+  me: Me;
+  isUltra: boolean;
+  onSub: () => void;
+}) {
   if (!isUltra) {
     return (
       <LockedOverlay
-        title="Auto-Buy is Ultra-only"
-        perks={[
-          "Buy matching drops the instant they land",
-          "Set budget, rank floor, must-include skins",
-          "Capped daily so you don't run through your credit",
-          "Shares drops fairly across all Ultra subscribers (round-robin)",
-        ]}
+        title="Auto-buy is Ultra-only"
+        description="Set filters for price, rank, skins, level and VP. The bot buys matching drops the moment they land, paid from your credit."
         onSub={onSub}
       >
-        <AutobuyManager />
+        <AutobuyManager me={me} />
       </LockedOverlay>
     );
   }
-  return <AutobuyManager />;
+  return <AutobuyManager me={me} />;
 }
 
 // ---- Shared Ultra-lock overlay ---------------------------------------
-// Renders the gated UI live behind a strong blur + dark wash so non-Ultra
-// users see a preview of what they'd unlock. The lock card floats
-// centered above with the perks + upgrade CTA. Pointer events on the
-// background are disabled so nothing under the blur can be clicked or
-// focused.
+// The gated UI renders live behind a blur so non-Ultra users see what
+// they'd unlock; pointer events are off so nothing under it can be used.
 
 function LockedOverlay({
-  title, perks, onSub, children,
+  title, perks, description, onSub, children,
 }: {
   title: string;
-  perks: string[];
+  perks?: string[];
+  description?: string;
   onSub: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ position: "relative", height: "100%", overflow: "hidden" }}>
-      {/* The live background UI, blurred + non-interactive. */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: "absolute",
-          inset: 0,
-          filter: "blur(6px) saturate(0.9)",
-          pointerEvents: "none",
-          userSelect: "none",
-        }}
-      >
+    <div style={{ position: "relative", height: "100%" }}>
+      <div aria-hidden="true" style={{ height: "100%", filter: "blur(6px)", pointerEvents: "none", userSelect: "none" }}>
         {children}
       </div>
-      {/* Dark gold-tinted wash for contrast behind the card. */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: "absolute",
-          inset: 0,
-          background:
-            "radial-gradient(circle at 50% 55%, rgba(255,212,0,0.08) 0%, transparent 55%), rgba(15,25,35,0.55)",
-          pointerEvents: "none",
-        }}
-      />
-      {/* Lock card */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "24px",
-        }}
-      >
-        <div
-          className="cut rise"
-          style={{
-            width: "460px",
-            maxWidth: "100%",
-            padding: "28px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "14px",
-            background: "var(--vu-navy)",
-            color: "var(--vu-ivory)",
-            boxShadow: "0 30px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,212,0,0.15)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span
-              className="cs"
-              style={{
-                width: "44px",
-                height: "44px",
-                background: "#ffd400",
-                color: "var(--vu-navy)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="4" y="11" width="16" height="10" rx="1" />
-                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-              </svg>
-            </span>
-            <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>
-              {title}
-            </span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {perks.map((p) => (
-              <span key={p} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffd400" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M20 6 9 17l-5-5" />
+      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,25,35,0.35)", padding: "24px" }}>
+        <div className="cut rise" style={{ width: "460px", maxWidth: "100%", padding: "28px", display: "flex", flexDirection: "column", gap: "14px", background: "var(--vu-navy)", color: "var(--vu-ivory)" }}>
+          {perks ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span className="cs" style={{ width: "44px", height: "44px", background: "#ffd400", color: "var(--vu-navy)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="4" y="11" width="16" height="10" rx="1" />
+                  <path d="M8 11V7a4 4 0 0 1 8 0v4" />
                 </svg>
-                {p}
               </span>
-            ))}
-          </div>
-          <button className="btn btn-gold cut btn-lg" onClick={onSub}>
-            Upgrade to Ultra — €59.99/mo
-          </button>
+              <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>{title}</span>
+            </div>
+          ) : (
+            <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>{title}</span>
+          )}
+          {description && <span style={{ color: "var(--vu-ivory-dim)" }}>{description}</span>}
+          {perks && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {perks.map((p, i) => (
+                <span key={p} className="rise" style={{ display: "flex", gap: "10px", alignItems: "center", animationDelay: `${100 + i * 60}ms` }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffd400" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  {p}
+                </span>
+              ))}
+            </div>
+          )}
+          <button className="btn btn-gold cut btn-lg" onClick={onSub}>Upgrade to Ultra — €59.99/mo</button>
         </div>
       </div>
     </div>
   );
 }
 
-function AutobuyManager() {
+// Peak-rank range options. Min uses the tier's floor ("gold"), max the
+// tier's top division ("gold 3") so rankIndex() comparisons include every
+// division of the chosen tier.
+const RANK_TIERS = ["Unranked", "Iron", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant"];
+const minRankValue = (t: string) => (t === "Unranked" ? "" : t.toLowerCase());
+const maxRankValue = (t: string) => (t === "Radiant" ? "" : t === "Unranked" ? "unranked" : `${t.toLowerCase()} 3`);
+const tierOfValue = (v: string | null | undefined, fallback: string) => {
+  if (!v) return fallback;
+  const w = v.split(" ")[0];
+  return w.charAt(0).toUpperCase() + w.slice(1);
+};
+
+type RuleDraft = {
+  name: string;
+  active: boolean;
+  region: "ANY" | Region;
+  max_price_cents: number;
+  min_peak: string;
+  max_peak: string;
+  min_skins: number;
+  min_level: number;
+  min_vp: number;
+  max_buys_per_day: number;
+  budget_cents: number;
+  required_skins: string[];
+};
+
+const NEW_RULE: RuleDraft = {
+  name: "New rule",
+  active: true,
+  region: "ANY",
+  max_price_cents: 6000,
+  min_peak: "",
+  max_peak: "",
+  min_skins: 10,
+  min_level: 0,
+  min_vp: 0,
+  max_buys_per_day: 1,
+  budget_cents: 10000,
+  required_skins: [],
+};
+
+function draftFromRule(r: AutobuyRule): RuleDraft {
+  return {
+    name: r.name ?? "Untitled rule",
+    active: r.active,
+    region: (r.regions?.[0] as Region | undefined) ?? "ANY",
+    max_price_cents: r.max_price_cents,
+    min_peak: r.min_peak ?? "",
+    max_peak: r.max_peak ?? "",
+    min_skins: r.min_skins ?? 0,
+    min_level: r.min_level ?? 0,
+    min_vp: r.min_vp ?? 0,
+    max_buys_per_day: r.max_buys_per_day,
+    budget_cents: r.budget_cents ?? 0,
+    required_skins: r.required_skins ?? [],
+  };
+}
+
+function draftToBody(d: RuleDraft) {
+  return {
+    name: d.name,
+    active: d.active,
+    regions: d.region === "ANY" ? [] : [d.region],
+    kinds: ["skinned"],
+    max_price_cents: d.max_price_cents,
+    min_peak: d.min_peak || null,
+    max_peak: d.max_peak || null,
+    min_skins: d.min_skins,
+    min_level: d.min_level,
+    min_vp: d.min_vp,
+    max_buys_per_day: d.max_buys_per_day,
+    budget_cents: d.budget_cents,
+    required_skins: d.required_skins,
+  };
+}
+
+function rankRangeLabel(d: RuleDraft): string {
+  const lo = tierOfValue(d.min_peak, "Unranked");
+  const hi = tierOfValue(d.max_peak, "Radiant");
+  if (lo === "Unranked" && hi === "Radiant") return "Any rank";
+  if (hi === "Radiant") return `${lo}+`;
+  return `${lo}–${hi}`;
+}
+
+function ruleSummary(r: AutobuyRule): string {
+  const d = draftFromRule(r);
+  return [
+    d.region === "ANY" ? "Any region" : d.region,
+    `≤€${Math.round(d.max_price_cents / 100)}`,
+    rankRangeLabel(d),
+    ...(d.required_skins.length ? [d.required_skins.join(", ")] : []),
+  ].join(" · ");
+}
+
+type MatchRow = { id: string; rank: string; rankIcon: string | null; region: string; skins: number; level: number; finalCents: number };
+type CatalogSkin = { key: string; label: string; icon: string | null; tier: string | null; tierColor: string | null };
+
+function AutobuyManager({ me }: { me: Me }) {
   const [rules, setRules] = useState<AutobuyRule[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Partial<AutobuyRule>>({
-    name: "New rule",
-    regions: [],
-    kinds: ["skinned"],
-    min_skins: 0,
-    max_price_cents: 5000,
-    min_level: 0,
-    min_peak: null,
-    required_skins: [],
-    max_buys_per_day: 5,
-    min_credit_cents: 5000,
-  });
-  const [matching, setMatching] = useState<number | null>(null);
+  const [draft, setDraft] = useState<RuleDraft>(NEW_RULE);
+  const [matches, setMatches] = useState<{ n: number; total: number; list: MatchRow[] } | null>(null);
+  const [catalog, setCatalog] = useState<CatalogSkin[] | null>(null);
+  const [mustQ, setMustQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [agree, setAgree] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  async function reload() {
-    const res = await fetch("/api/autobuy");
-    const d = await res.json();
-    if (d.ok) setRules(d.rules);
+  const set = <K extends keyof RuleDraft>(k: K, v: RuleDraft[K]) => { setDraft((d) => ({ ...d, [k]: v })); setSaved(false); };
+
+  async function reload(selectId?: string) {
+    try {
+      const res = await fetch("/api/autobuy");
+      const d = await res.json();
+      if (!d.ok) { setRules([]); return; }
+      setRules(d.rules);
+      const pick = selectId ?? selectedId;
+      const r = (d.rules as AutobuyRule[]).find((x) => x.id === pick) ?? (pick === null && !selectId ? d.rules[0] : null);
+      if (r) { setSelectedId(r.id); setDraft(draftFromRule(r)); }
+    } catch { setRules([]); }
   }
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Preview "matching right now" whenever the draft changes
+  // Skin catalogue for "Must include" — skins currently in stock.
+  const catalogRegion = draft.region === "ANY" ? "EU" : draft.region;
+  useEffect(() => {
+    let cancelled = false;
+    setCatalog(null);
+    fetch(`/api/stock/all-skins?region=${catalogRegion}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setCatalog(d.ok ? d.skins : []); })
+      .catch(() => { if (!cancelled) setCatalog([]); });
+    return () => { cancelled = true; };
+  }, [catalogRegion]);
+
+  // Live "matching right now" preview of the draft.
+  const body = JSON.stringify(draftToBody(draft));
   useEffect(() => {
     let cancelled = false;
     const h = setTimeout(async () => {
       try {
-        const res = await fetch("/api/autobuy/matches", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(draft),
-        });
+        const res = await fetch("/api/autobuy/matches", { method: "POST", headers: { "content-type": "application/json" }, body });
         const d = await res.json();
-        if (!cancelled && d.ok) setMatching(d.matching);
-      } catch {}
-    }, 400);
+        if (!cancelled && d.ok) setMatches({ n: d.matching, total: d.total ?? d.scanned, list: d.matches ?? [] });
+      } catch { /* preview only */ }
+    }, 350);
     return () => { cancelled = true; clearTimeout(h); };
-  }, [JSON.stringify(draft)]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [body]);
 
   function selectRule(r: AutobuyRule) {
-    setSelectedId(r.id);
-    setDraft({ ...r });
-    setErr("");
+    setSelectedId(r.id); setDraft(draftFromRule(r)); setErr(""); setSaved(false);
   }
-
   function newRule() {
-    setSelectedId(null);
-    setDraft({
-      name: "New rule",
-      regions: [],
-      kinds: ["skinned"],
-      min_skins: 0,
-      max_price_cents: 5000,
-      min_level: 0,
-      min_peak: null,
-      required_skins: [],
-      max_buys_per_day: 5,
-      min_credit_cents: 5000,
-    });
-    setErr("");
+    setSelectedId(null); setDraft(NEW_RULE); setErr(""); setSaved(false);
   }
 
-  async function save() {
+  async function persist(d: RuleDraft) {
     setBusy(true); setErr("");
     try {
       const url = selectedId ? `/api/autobuy/${selectedId}` : "/api/autobuy";
-      const method = selectedId ? "PATCH" : "POST";
       const res = await fetch(url, {
-        method,
+        method: selectedId ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(draftToBody(d)),
       });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error ?? "save_failed");
-      await reload();
-      if (!selectedId) setSelectedId(d.rule.id);
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error ?? "save_failed");
+      await reload(out.rule?.id ?? selectedId ?? undefined);
+      setSaved(true);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2671,257 +2847,329 @@ function AutobuyManager() {
     }
   }
 
-  async function toggleActive(r: AutobuyRule) {
-    setBusy(true);
-    await fetch(`/api/autobuy/${r.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ active: !r.active }),
-    });
-    await reload();
-    setBusy(false);
-  }
-
-  async function deleteRule(r: AutobuyRule) {
-    if (!confirm(`Delete rule "${r.name}"?`)) return;
+  async function deleteRule() {
+    const r = rules?.find((x) => x.id === selectedId);
+    if (!r || !confirm(`Delete rule "${r.name}"?`)) return;
     setBusy(true);
     await fetch(`/api/autobuy/${r.id}`, { method: "DELETE" });
-    if (selectedId === r.id) newRule();
-    await reload();
+    setSelectedId(null);
+    setDraft(NEW_RULE);
+    await reload("__none__");
     setBusy(false);
   }
 
+  const current = rules?.find((r) => r.id === selectedId) ?? null;
+  // Turning a rule on (new, or previously paused) goes through the
+  // "credit will be spent automatically" confirmation.
+  const needsConfirm = draft.active && (!current || !current.active);
+  function onSave() {
+    if (needsConfirm) { setAgree(false); setConfirmOpen(true); }
+    else persist(draft);
+  }
+
+  const credit = me.creditCents;
+  const low = credit < draft.max_price_cents;
+  const mq = mustQ.trim().toLowerCase();
+  const mustList = useMemo(() => {
+    const base = catalog ?? [];
+    const req = new Set(draft.required_skins.map((s) => s.toLowerCase()));
+    const known = new Set(base.map((s) => s.label.toLowerCase()));
+    // Required skins that aren't in today's stock still show (and stay removable).
+    const extra: CatalogSkin[] = draft.required_skins
+      .filter((s) => !known.has(s.toLowerCase()))
+      .map((s) => ({ key: s, label: s, icon: null, tier: null, tierColor: null }));
+    return extra.concat(base)
+      .filter((s) => !mq || s.label.toLowerCase().includes(mq))
+      .sort((a, b) => Number(req.has(b.label.toLowerCase())) - Number(req.has(a.label.toLowerCase())))
+      .slice(0, 120);
+  }, [catalog, draft.required_skins, mq]);
+
+  function toggleMust(label: string) {
+    const has = draft.required_skins.some((s) => s.toLowerCase() === label.toLowerCase());
+    set("required_skins", has ? draft.required_skins.filter((s) => s.toLowerCase() !== label.toLowerCase()) : draft.required_skins.concat([label]));
+  }
+
+  const slider = (label: string, value: string, input: React.ReactNode) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+      <span style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span className="lbl" style={{ fontSize: "12px" }}>{label}</span>
+        <span className="bc num" style={{ fontWeight: 700, fontSize: "20px" }}>{value}</span>
+      </span>
+      {input}
+    </label>
+  );
+
+  const sumStats = [
+    { k: "Region", v: draft.region === "ANY" ? "Any" : draft.region },
+    { k: "Max price", v: `€${Math.round(draft.max_price_cents / 100)}` },
+    { k: "Rank", v: rankRangeLabel(draft) },
+    { k: "Min skins", v: `${draft.min_skins}+` },
+    { k: "Per day", v: String(draft.max_buys_per_day) },
+    { k: "Budget", v: draft.budget_cents ? `€${Math.round(draft.budget_cents / 100)}` : "No cap" },
+  ];
+
   return (
-    <div
-      style={{
-        height: "100%",
-        display: "grid",
-        gridTemplateColumns: "240px minmax(0, 1fr) 280px",
-        gap: "16px",
-      }}
-    >
-      {/* LEFT: rules list */}
-      <section className="pn cut" style={{ padding: "16px 0", display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <div style={{ padding: "0 16px 10px" }}>
-          <span className="lbl">Auto-buy <span style={{ color: "#c9a800" }}>rules</span></span>
-          <p className="mut" style={{ fontSize: "12px", marginTop: "4px", marginBottom: 0 }}>
-            Rules buy matching X-Ray drops the instant they land, paid from your credit.
-          </p>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-          {rules === null ? (
-            <div style={{ padding: "16px", textAlign: "center" }} className="mut bc">Loading…</div>
-          ) : rules.length === 0 ? (
-            <div style={{ padding: "24px 16px", textAlign: "center" }} className="mut">
-              No rules yet. Click <b>+ New rule</b> below.
-            </div>
-          ) : (
-            rules.map((r) => (
-              <button
-                key={r.id}
-                className={`xrow ${selectedId === r.id ? "on" : ""}`}
-                onClick={() => selectRule(r)}
-                style={{ height: "72px" }}
-              >
-                <span style={{ width: "10px", height: "10px", background: r.active ? "var(--accent-green)" : "var(--vu-mute)", flex: "none", borderRadius: "50%" }} />
-                <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span className="bc" style={{ fontWeight: 700, fontSize: "15px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {r.name}
-                  </span>
-                  <span className="mut num" style={{ fontSize: "11px" }}>
-                    {r.regions.length === 0 ? "Any region" : r.regions.join(",")} · €{eur(r.max_price_cents)} max
-                  </span>
-                </span>
-                <span className="bc num" style={{ fontSize: "11px", color: r.active ? "var(--accent-success)" : "var(--vu-mute)" }}>
-                  {r.active ? "ACTIVE" : "PAUSED"}
-                  <br />
-                  <span style={{ color: "var(--vu-mute)" }}>{r.bought_today} bought</span>
+    <div style={{ height: "100%", position: "relative" }}>
+      <div style={{ height: "100%", display: "grid", gridTemplateColumns: "280px minmax(0, 1fr) 320px", gap: "16px" }}>
+        {/* LEFT: rules */}
+        <section className="pn cut" style={{ padding: "16px 0 12px", display: "flex", flexDirection: "column", gap: "10px", minHeight: 0 }}>
+          <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="h" style={{ fontSize: "26px" }}>Auto-buy <span style={{ color: "#c9a800" }}>rules</span></span>
+            <span className="mut" style={{ fontSize: "12px" }}>Rules buy matching X-Ray drops the instant they land, paid from your credit.</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", overflow: "auto", minHeight: 0 }}>
+            {rules === null ? (
+              Array.from({ length: 3 }).map((_, i) => <div key={i} className="skel l" style={{ height: "58px", margin: "4px 12px" }} />)
+            ) : rules.length === 0 && selectedId === null ? (
+              <button className="xrow on" style={{ height: "66px" }}>
+                <span style={{ width: "10px", height: "10px", flex: "none", transform: "rotate(45deg)", background: "#8b97a5" }} />
+                <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                  <span className="bc" style={{ fontWeight: 700, fontSize: "17px" }}>{draft.name || "Untitled rule"}</span>
+                  <span className="mut" style={{ fontSize: "12px" }}>Not saved yet</span>
                 </span>
               </button>
-            ))
-          )}
-        </div>
-        <button className="btn btn-soft cs" style={{ margin: "12px 16px 0" }} onClick={newRule}>
-          + New rule
-        </button>
-      </section>
-
-      {/* CENTER: editor */}
-      <section className="pn cut" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0, overflow: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span className="lbl">Rule name</span>
-            <input
-              className="inp"
-              value={draft.name ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-            />
-          </div>
-          {selectedId && rules?.find((r) => r.id === selectedId) && (
-            <div className="seg" style={{ flex: "none" }}>
-              {(() => {
-                const r = rules.find((x) => x.id === selectedId)!;
-                return (
-                  <>
-                    <button className={r.active ? "on" : ""} onClick={() => toggleActive(r)}>Active</button>
-                    <button className={!r.active ? "on" : ""} onClick={() => toggleActive(r)}>Paused</button>
-                  </>
-                );
-              })()}
-            </div>
-          )}
-        </div>
-
-        <div>
-          <span className="lbl">Region</span>
-          <div className="seg" style={{ marginTop: "4px", flexWrap: "wrap" }}>
-            <button
-              className={(draft.regions ?? []).length === 0 ? "on" : ""}
-              onClick={() => setDraft((d) => ({ ...d, regions: [] }))}
-            >
-              Any
-            </button>
-            {REGIONS.map((r) => {
-              const active = (draft.regions ?? []).includes(r);
-              return (
+            ) : (
+              rules.map((r, i) => (
                 <button
-                  key={r}
-                  className={active ? "on" : ""}
-                  onClick={() => setDraft((d) => {
-                    const cur = new Set(d.regions ?? []);
-                    if (cur.has(r)) cur.delete(r); else cur.add(r);
-                    return { ...d, regions: Array.from(cur) };
-                  })}
+                  key={r.id}
+                  className={`xrow rise ${selectedId === r.id ? "on" : ""}`}
+                  onClick={() => selectRule(r)}
+                  style={{ height: "66px", animationDelay: `${i * 40}ms` }}
                 >
-                  {r}
+                  <span style={{ width: "10px", height: "10px", flex: "none", transform: "rotate(45deg)", background: r.active ? "#16a34a" : "#8b97a5" }} />
+                  <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                    <span className="bc" style={{ fontWeight: 700, fontSize: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {r.name || "Untitled rule"}
+                    </span>
+                    <span className="mut num" style={{ fontSize: "12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {ruleSummary(r)}
+                    </span>
+                  </span>
+                  <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                    <span className="bc" style={{ fontWeight: 700, fontSize: "14px", color: r.active ? "#16a34a" : "#8b97a5" }}>
+                      {r.active ? "Active" : "Paused"}
+                    </span>
+                    <span className="mut num" style={{ fontSize: "11px" }}>{r.bought_today} today</span>
+                  </span>
                 </button>
-              );
-            })}
+              ))
+            )}
           </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span className="lbl">Max price (after −30%)</span>
-            <input
-              className="inp num"
-              type="number"
-              min="1"
-              step="0.01"
-              value={((draft.max_price_cents ?? 0) / 100).toFixed(2)}
-              onChange={(e) => setDraft((d) => ({ ...d, max_price_cents: Math.round(parseFloat(e.target.value) * 100) || 0 }))}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span className="lbl">Min skins</span>
-            <input
-              className="inp num"
-              type="number"
-              min="0"
-              value={draft.min_skins ?? 0}
-              onChange={(e) => setDraft((d) => ({ ...d, min_skins: parseInt(e.target.value, 10) || 0 }))}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span className="lbl">Min level</span>
-            <input
-              className="inp num"
-              type="number"
-              min="0"
-              value={draft.min_level ?? 0}
-              onChange={(e) => setDraft((d) => ({ ...d, min_level: parseInt(e.target.value, 10) || 0 }))}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span className="lbl">Min peak rank</span>
-            <select
-              className="inp"
-              value={draft.min_peak ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, min_peak: e.target.value || null }))}
-            >
-              <option value="">Any</option>
-              {["iron", "bronze", "silver", "gold", "platinum", "diamond", "ascendant", "immortal", "radiant"].map((r) => (
-                <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span className="lbl">Max buys / day</span>
-            <input
-              className="inp num"
-              type="number"
-              min="1"
-              max="20"
-              value={draft.max_buys_per_day ?? 5}
-              onChange={(e) => setDraft((d) => ({ ...d, max_buys_per_day: parseInt(e.target.value, 10) || 1 }))}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <span className="lbl">Pause under € credit</span>
-            <input
-              className="inp num"
-              type="number"
-              min="0"
-              step="0.01"
-              value={((draft.min_credit_cents ?? 0) / 100).toFixed(2)}
-              onChange={(e) => setDraft((d) => ({ ...d, min_credit_cents: Math.round(parseFloat(e.target.value) * 100) || 0 }))}
-            />
-          </label>
-        </div>
-
-        {err && (
-          <div style={{ padding: "8px 12px", background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px" }}>
-            {err}
-          </div>
-        )}
-
-        <div style={{ flex: 1 }} />
-
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          {selectedId && (
-            <button
-              className="btn btn-soft cs"
-              style={{ color: "var(--accent-rose)" }}
-              onClick={() => {
-                const r = rules?.find((x) => x.id === selectedId);
-                if (r) deleteRule(r);
-              }}
-            >
-              Delete rule
-            </button>
-          )}
           <div style={{ flex: 1 }} />
-          <button className="btn btn-red cs" onClick={save} disabled={busy}>
-            {busy ? "…" : selectedId ? "Save changes" : "Save & activate"}
-          </button>
-        </div>
-      </section>
+          <div style={{ padding: "0 12px" }}>
+            <button className="btn btn-soft cs" style={{ width: "100%" }} onClick={newRule}>+ New rule</button>
+          </div>
+        </section>
 
-      {/* RIGHT: matches preview */}
-      <section className="pn cut" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0 }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-          <span className="lbl">Matching right now</span>
-          <span className="h num" style={{ fontSize: "28px", color: matching === null ? "var(--vu-mute)" : matching > 0 ? "var(--accent-success)" : "var(--vu-mute)" }}>
-            {matching ?? "…"}
-          </span>
+        {/* CENTER: editor */}
+        <section key={selectedId ?? "new"} className="pn cut rise" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "14px", minHeight: 0 }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "flex-end" }}>
+            <label style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span className="lbl" style={{ fontSize: "12px" }}>Rule name</span>
+              <input className="inp" type="text" value={draft.name} onChange={(e) => set("name", e.target.value)} style={{ fontWeight: 600 }} />
+            </label>
+            <div className="seg" role="group" aria-label="Status">
+              <button className={draft.active ? "on" : ""} onClick={() => set("active", true)}>Active</button>
+              <button className={!draft.active ? "on" : ""} onClick={() => set("active", false)}>Paused</button>
+            </div>
+            {selectedId && (
+              <button className="ico" aria-label="Delete rule" title="Delete rule" onClick={deleteRule} style={{ height: "38px", width: "38px", color: "var(--accent-rose)" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" />
+                </svg>
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl" style={{ fontSize: "12px" }}>Region</span>
+            <div className="seg cy" role="group" aria-label="Region" style={{ display: "flex" }}>
+              {(["ANY", ...REGIONS] as const).map((g) => (
+                <button key={g} className={draft.region === g ? "on" : ""} style={{ flex: 1, justifyContent: "center" }} onClick={() => set("region", g)}>
+                  {g === "ANY" ? "Any" : g}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "14px 24px" }}>
+            {slider("Max price (after −30%)", `€${Math.round(draft.max_price_cents / 100)}`,
+              <input type="range" min="10" max="200" step="5" value={Math.round(draft.max_price_cents / 100)}
+                onChange={(e) => set("max_price_cents", Number(e.target.value) * 100)} style={{ width: "100%", accentColor: "#ff4655" }} />)}
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span className="lbl" style={{ fontSize: "12px" }}>Peak rank range</span>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <select className="inp" aria-label="Lowest peak rank" value={tierOfValue(draft.min_peak, "Unranked")} onChange={(e) => set("min_peak", minRankValue(e.target.value))}>
+                  {RANK_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <span className="mut">to</span>
+                <select className="inp" aria-label="Highest peak rank" value={tierOfValue(draft.max_peak, "Radiant")} onChange={(e) => set("max_peak", maxRankValue(e.target.value))}>
+                  {RANK_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+            {slider("Min skins", `${draft.min_skins}+`,
+              <input type="range" min="0" max="100" step="1" value={draft.min_skins}
+                onChange={(e) => set("min_skins", Number(e.target.value))} style={{ width: "100%", accentColor: "#ff4655" }} />)}
+            {slider("Min level", `${draft.min_level}+`,
+              <input type="range" min="0" max="300" step="5" value={draft.min_level}
+                onChange={(e) => set("min_level", Number(e.target.value))} style={{ width: "100%", accentColor: "#ff4655" }} />)}
+            {slider("Min VP", `${draft.min_vp}+`,
+              <input type="range" min="0" max="2500" step="50" value={draft.min_vp}
+                onChange={(e) => set("min_vp", Number(e.target.value))} style={{ width: "100%", accentColor: "#ff4655" }} />)}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                <span className="lbl" style={{ fontSize: "12px" }}>Max buys / day</span>
+                <input className="inp num" type="number" min="1" max="10" value={draft.max_buys_per_day}
+                  onChange={(e) => set("max_buys_per_day", Math.min(10, Math.max(1, parseInt(e.target.value, 10) || 1)))} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                <span className="lbl" style={{ fontSize: "12px" }}>Total budget €</span>
+                <input className="inp num" type="number" min="0" step="10" value={Math.round(draft.budget_cents / 100)}
+                  onChange={(e) => set("budget_cents", Math.max(0, parseInt(e.target.value, 10) || 0) * 100)} />
+              </label>
+            </div>
+          </div>
+
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: "6px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+              <span className="lbl" style={{ fontSize: "12px" }}>Must include skins</span>
+              <div style={{ position: "relative", width: "210px" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b97a5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ position: "absolute", left: "10px", top: "9px", pointerEvents: "none" }}>
+                  <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+                </svg>
+                <input className="inp" type="search" placeholder="Search skins…" value={mustQ} onChange={(e) => setMustQ(e.target.value)} style={{ height: "32px", paddingLeft: "30px" }} aria-label="Search must-include skins" />
+              </div>
+            </div>
+            <span className="mut" style={{ fontSize: "12px" }}>
+              {draft.required_skins.length ? `${draft.required_skins.length} required · account must have all` : "None · any skins"}
+            </span>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gridAutoRows: "72px", gap: "6px", alignContent: "start" }}>
+              {catalog === null
+                ? Array.from({ length: 12 }).map((_, i) => <div key={i} className="skel cs" />)
+                : mustList.map((k) => {
+                  const on = draft.required_skins.some((s) => s.toLowerCase() === k.label.toLowerCase());
+                  const tc = k.tierColor ?? "#5b6474";
+                  return (
+                    <button
+                      key={k.key}
+                      className="tile cs"
+                      style={{ ["--tc" as string]: tc, boxShadow: on ? `inset 0 0 0 2px ${tc}` : "none", animation: "none" }}
+                      onClick={() => toggleMust(k.label)}
+                      aria-pressed={on}
+                      aria-label={k.label}
+                      title={k.label}
+                    >
+                      <span className="glow" style={{ opacity: on ? 0.9 : 0.25 }} />
+                      <span style={{ position: "relative", flex: 1, minHeight: "20px", display: "flex", alignItems: "center", justifyContent: "center", padding: "4px 8px" }}>
+                        {k.icon && <img src={k.icon} alt="" loading="lazy" style={{ width: "100%", height: "100%", maxHeight: "34px", objectFit: "contain", opacity: on ? 1 : 0.55, transition: "opacity 160ms" }} />}
+                      </span>
+                      <span className="bc" style={{ position: "relative", fontSize: "12px", fontWeight: 700, padding: "2px 6px 4px", color: on ? "#fff" : "#9aa5b1", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {k.label}
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+        </section>
+
+        {/* RIGHT: matches + wallet */}
+        <aside style={{ display: "flex", flexDirection: "column", gap: "16px", minHeight: 0 }}>
+          <section className="pn cut" style={{ padding: "16px", flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span className="lbl" style={{ color: "var(--vu-navy)" }}>Matching right now</span>
+              <span className="h num" style={{ fontSize: "26px", color: matches?.n ? "#16a34a" : "#8b97a5" }}>
+                {matches ? matches.n : "…"}
+                <span style={{ color: "#8b97a5", fontSize: "18px" }}> / {matches ? matches.total : "…"}</span>
+              </span>
+            </div>
+            {matches && matches.n === 0 ? (
+              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "0 12px" }} className="mut">
+                No listed account fits this rule right now. It fires on the next drop that does.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", overflow: "auto" }}>
+                {(matches?.list ?? []).map((m, i) => (
+                  <div key={m.id} className="rise" style={{ display: "flex", alignItems: "center", gap: "10px", height: "44px", borderBottom: "1px solid var(--vu-divider)", animationDelay: `${Math.min(i, 10) * 30}ms` }}>
+                    {m.rankIcon ? <img src={m.rankIcon} alt="" style={{ width: "26px", height: "26px" }} /> : <span style={{ width: "26px" }} />}
+                    <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                      <span className="bc" style={{ fontWeight: 700, fontSize: "15px" }}>{m.rank} · {m.region}</span>
+                      <span className="mut num" style={{ fontSize: "11px" }}>{m.skins} skins · Lvl {m.level}</span>
+                    </span>
+                    <span className="bc num" style={{ fontWeight: 700, fontSize: "17px" }}>€{eur(m.finalCents)}</span>
+                  </div>
+                ))}
+                {matches && matches.n > matches.list.length && (
+                  <span className="mut num" style={{ fontSize: "12px", padding: "8px 0" }}>+{matches.n - matches.list.length} more</span>
+                )}
+              </div>
+            )}
+          </section>
+          <section className="pn cut" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span className="lbl" style={{ color: "var(--vu-navy)" }}>Wallet</span>
+              <span className="h num" style={{ fontSize: "28px", color: "#a68a00" }}>€{eur(credit)}</span>
+            </div>
+            {low && (
+              <div className="rise" style={{ background: "#fef3c7", color: "#713f12", fontSize: "12px", padding: "8px 10px" }}>
+                Your credit is below this rule&apos;s max price (€{Math.round(draft.max_price_cents / 100)}). A match you can&apos;t cover is skipped and goes to the next buyer.
+              </div>
+            )}
+            {err && <div className="rise" style={{ background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "12px", padding: "8px 10px" }}>{err}</div>}
+            {saved && !err && <div className="rise" style={{ background: "#dcfce7", color: "#15803d", fontSize: "12px", padding: "8px 10px" }}>Rule saved.</div>}
+            <button className="btn btn-red cs" style={{ width: "100%" }} onClick={onSave} disabled={busy}>
+              {busy ? "Saving…" : needsConfirm ? "Save & activate" : current ? "Save changes" : "Save rule"}
+            </button>
+          </section>
+        </aside>
+      </div>
+
+      {confirmOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(15,25,35,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div role="dialog" aria-modal="true" aria-label="Activate auto-buy" className="cut rise" style={{ width: "100%", maxWidth: "520px", maxHeight: "100%", overflow: "auto", background: "#fff", display: "flex", flexDirection: "column" }}>
+            <div style={{ background: "var(--vu-navy)", color: "#fff", padding: "14px 18px", display: "flex", alignItems: "center", gap: "12px", borderBottom: "3px solid #ffd400" }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                <span className="h" style={{ fontSize: "24px" }}>Activate auto-buy?</span>
+                <span style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>{draft.name}</span>
+              </div>
+              <button className="ico" style={{ color: "var(--vu-ivory-dim)" }} aria-label="Close" onClick={() => setConfirmOpen(false)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </div>
+            <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "4px" }}>
+                {sumStats.map((a) => (
+                  <div key={a.k} style={{ background: "var(--vu-surface-alt)", padding: "6px 10px", display: "flex", flexDirection: "column" }}>
+                    <span className="lbl" style={{ fontSize: "11px" }}>{a.k}</span>
+                    <span className="bc num" style={{ fontWeight: 700, fontSize: "17px" }}>{a.v}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ background: "#fff1f2", padding: "12px 14px", display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px", color: "#4c0519" }}>
+                {[
+                  "Credit is taken from your wallet automatically the moment a match is found. There is no extra confirmation per purchase.",
+                  "If your credit is below the price when a match drops, the purchase is skipped and the account goes to the next buyer. You lose that drop.",
+                  "When several Ultra rules match the same drop, it goes round-robin. Matching doesn't guarantee you get it.",
+                  "Auto-bought accounts are final once delivered. Refunds and replacements follow the normal rules.",
+                ].map((t, i) => (
+                  <span key={i} style={{ display: "flex", gap: "8px" }}><b style={{ color: "#e11d48" }}>{i + 1}</b>{t}</span>
+                ))}
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: "10px", fontWeight: 600, cursor: "pointer" }}>
+                <input type="checkbox" checked={agree} onChange={() => setAgree((a) => !a)} style={{ width: "18px", height: "18px", accentColor: "#ff4655" }} />
+                I understand credit will be spent automatically.
+              </label>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button className="btn btn-soft cs" style={{ flex: 1 }} onClick={() => setConfirmOpen(false)}>Cancel</button>
+                <button className="btn btn-red cs" style={{ flex: 2 }} disabled={!agree || busy} onClick={() => { setConfirmOpen(false); persist({ ...draft, active: true }); }}>
+                  Activate rule
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-        <p className="mut" style={{ fontSize: "12px", marginTop: 0 }}>
-          {matching === 0
-            ? "No listed account fits this rule right now. It fires on the next drop that does."
-            : matching === null
-            ? "Checking inventory…"
-            : `${matching} ${matching === 1 ? "account" : "accounts"} in stock match these filters. New matches fire your rule as they come in.`}
-        </p>
-        <div style={{ flex: 1 }} />
-        <div className="cut" style={{ padding: "12px 14px", background: "var(--vu-surface-alt)" }}>
-          <span className="lbl">Wallet</span>
-          <div className="h num" style={{ fontSize: "24px", marginTop: "4px" }}>—</div>
-          <p className="mut" style={{ fontSize: "11px", marginTop: "4px", marginBottom: 0 }}>
-            Rules pause automatically when your credit drops below the
-            configured threshold. Top up on the <b>Subscribe</b> tab.
-          </p>
-        </div>
-      </section>
+      )}
     </div>
   );
 }

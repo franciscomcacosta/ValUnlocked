@@ -12,6 +12,17 @@
 import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
 import { xrayPriceForUltra, type SubTier } from "@/lib/pricing";
+import { lookupRank, type RankArt } from "@/lib/valorant-assets";
+
+// qvsp ranks come as "platinum 2", "PLATINUM" (no division) or "unranked".
+// valorant-api keys by "PLATINUM 2"; fall back to division 1 for bare tiers.
+async function rankArt(raw: string | null): Promise<RankArt> {
+  const name = (raw ?? "").trim();
+  if (!name || /^(n\/a|unranked)$/i.test(name)) return lookupRank("Unranked");
+  const hit = await lookupRank(name);
+  if (hit.icon) return hit;
+  return lookupRank(`${name} 1`);
+}
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -45,6 +56,7 @@ export async function GET(req: Request) {
   const maxPriceCents = parseInt(url.searchParams.get("maxPriceCents") ?? "0", 10) || 0;
   const skinSearch = url.searchParams.get("skin")?.trim() ?? "";
   const sort = url.searchParams.get("sort") ?? "newest";
+  const dirParam = url.searchParams.get("dir");
   if (region && !REGIONS.has(region)) {
     return Response.json({ error: "invalid_region" }, { status: 400 });
   }
@@ -66,14 +78,18 @@ export async function GET(req: Request) {
   if (minSkins > 0) q = q.gte("skin_count", minSkins);
   if (skinSearch) q = q.overlaps("skins", [skinSearch]);
 
-  // Sorting
-  switch (sort) {
-    case "cheapest":   q = q.order("qvsp_price_cents", { ascending: true }); break;
-    case "most_skins": q = q.order("skin_count", { ascending: false }); break;
-    case "highest_peak": q = q.order("peak", { ascending: false }); break;
-    case "newest":
-    default:           q = q.order("first_seen_at", { ascending: false });
-  }
+  // Sorting. Each sort has a natural default direction; `dir` flips it
+  // (the UI toggles on a second click, like the designer's ▲/▼).
+  const SORT_COL: Record<string, { col: string; asc: boolean }> = {
+    newest:       { col: "first_seen_at",    asc: false },
+    cheapest:     { col: "qvsp_price_cents", asc: true },
+    most_skins:   { col: "skin_count",       asc: false },
+    highest_peak: { col: "peak",             asc: false },
+    highest_vp:   { col: "vp",               asc: false },
+  };
+  const sc = SORT_COL[sort] ?? SORT_COL.newest;
+  const asc = dirParam === "asc" ? true : dirParam === "desc" ? false : sc.asc;
+  q = q.order(sc.col, { ascending: asc, nullsFirst: false });
 
   const from = (page - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
@@ -82,9 +98,16 @@ export async function GET(req: Request) {
 
   // Map rows + attach Ultra-specific pricing. Filter in-memory by maxPrice
   // (based on Ultra final price) since it's derived.
-  const items = (data ?? []).map((row) => {
+  const items = (await Promise.all((data ?? []).map(async (row) => {
     const pricing = xrayPriceForUltra(row.qvsp_price_cents);
+    const [rk, pk] = await Promise.all([rankArt(row.rank_normalized), rankArt(row.peak)]);
     return {
+      rankIcon: rk.icon,
+      rankColor: rk.color,
+      rankName: rk.canonicalName,
+      peakIcon: pk.icon,
+      peakColor: pk.color,
+      peakName: pk.canonicalName,
       account_id: row.qvsp_id,
       region: row.region,
       level: row.level,
@@ -102,7 +125,7 @@ export async function GET(req: Request) {
       savingsCents: pricing.savingsCents,
       discountPct: pricing.discountPct,
     };
-  }).filter((it) => (maxPriceCents > 0 ? it.finalCents <= maxPriceCents : true));
+  }))).filter((it) => (maxPriceCents > 0 ? it.finalCents <= maxPriceCents : true));
 
   return Response.json({
     ok: true,

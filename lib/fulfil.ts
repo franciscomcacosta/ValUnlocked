@@ -82,12 +82,22 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     return false;
   }
 
-  // Actually buy from qvsp (spends our qvsp balance). If the reserved
-  // listing was bought by someone else on qvsp in the meantime, swap in the
-  // next-cheapest EQUIVALENT account (same bracket / same skin, same region)
-  // — the buyer's price never changes. No equivalent → full credit refund.
+  // Buy from qvsp → verify the credentials work → if broken, swap and try
+  // the next equivalent. Two swap reasons: (a) qvsp sold it to someone
+  // else before our POST, (b) the creds qvsp gave us don't log in.
+  //
+  // Verification runs in the Fly worker: it attempts the login in a
+  // headless browser and records video. On failure we have a proof
+  // video we can hand qvsp to open a replacement ticket; the buyer
+  // never sees the broken account.
+  //
+  // If the worker can't give a verdict (captcha, timeout), we fall back
+  // to today's behavior: deliver with a 10-min test window and dispatch
+  // the async extractor for the recovery email.
   let qvspOrder: QvspOrder | null = null;
   let row = qvspRow;
+  let verifiedEmail: string | null = null;
+  let verifyVerdict: "ok" | "unverified" | null = null;
   for (let attempt = 0; attempt < 4 && !qvspOrder; attempt++) {
     try {
       qvspOrder = await buyAccount({ kind: row.kind as QvspKind, id: row.qvsp_id, orderRef: orderId });
@@ -116,7 +126,61 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
       }
       await logToStaff(`🔁 Order ${orderId}: ${row.qvsp_id} sold on qvsp before we bought it — swapped to ${alt.qvsp_id}.`);
       row = alt;
+      continue;
     }
+
+    // qvsp accepted the buy. Check the creds shape before verifying.
+    const peekCreds = qvspOrder.credentials;
+    if (!peekCreds?.login || !peekCreds?.password) {
+      const shape = String((qvspOrder as Record<string, unknown>)._shape ?? "?");
+      console.error(`[fulfil] qvsp order ${qvspOrder.id || "?"} returned no credentials · shape ${shape}`);
+      await db.from("orders").update({ status: "paid" }).eq("id", orderId);
+      await logToStaff(
+        `⚠️ Order ${orderId}: qvsp accepted the purchase (qvsp order ${qvspOrder.id || "unknown"}) but sent no readable login yet. ` +
+          `Will retry. Response shape (values hidden): \`${shape.slice(0, 600)}\``
+      );
+      return false;
+    }
+
+    // Pre-flight the credentials in the headless worker.
+    const verdict = await verifyCredsWithWorker(orderId, peekCreds.login, peekCreds.password);
+    if (verdict.ok) {
+      verifiedEmail = verdict.email;
+      verifyVerdict = "ok";
+      break;
+    }
+    if (verdict.reason === "login_invalid" || verdict.reason === "login_timeout") {
+      // Account is broken. File it for the qvsp replacement claim,
+      // hide it, release our hold, swap for an equivalent, loop again.
+      await db.from("qvsp_broken_accounts").insert({
+        order_id: orderId,
+        qvsp_id: row.qvsp_id,
+        qvsp_order_id: qvspOrder.id ?? null,
+        reason: verdict.reason,
+        proof_video_url: verdict.video_url ?? null,
+      }).then(() => undefined, (e) => console.warn("[fulfil] couldn't log broken account (run migration)", e?.message));
+      await logToStaff(
+        `🚫 Order ${orderId}: creds for qvsp ${row.qvsp_id} failed verification (${verdict.reason}). ` +
+          (verdict.video_url ? `Proof: ${verdict.video_url}\n` : "") +
+          `Swapping for an equivalent. File a qvsp replacement ticket with the video above.`
+      );
+      await db.from("qvsp_stock").update({ removed_at: new Date().toISOString() }).eq("qvsp_id", row.qvsp_id);
+      await db.rpc("release_qvsp_stock", { p_order_id: orderId });
+      const alt = await reserveEquivalent(orderId, row);
+      if (!alt) {
+        await refundSoldOut(orderId, order.user_id as string, user?.discord_id ?? null, product?.name ?? "your account");
+        return false;
+      }
+      row = alt;
+      qvspOrder = null;  // reset so the loop buys the swap
+      continue;
+    }
+    // captcha_present / email_not_found / worker_error / extraction_timeout:
+    // can't be sure the account is bad. Trust qvsp, deliver with the 10-min
+    // test window as the safety net. Don't swap.
+    verifyVerdict = "unverified";
+    console.warn(`[fulfil] order ${orderId}: verify inconclusive (${verdict.reason}) — delivering with test-window fallback`);
+    break;
   }
   if (!qvspOrder) {
     await refundSoldOut(orderId, order.user_id as string, user?.discord_id ?? null, product?.name ?? "your account");
@@ -127,17 +191,7 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   // the credentials aren't readable yet (retries replay the same order).
   if (qvspOrder.id) await db.from("orders").update({ qvsp_order_id: qvspOrder.id }).eq("id", orderId);
 
-  const creds = qvspOrder.credentials;
-  if (!creds?.login || !creds?.password) {
-    const shape = String((qvspOrder as Record<string, unknown>)._shape ?? "?");
-    console.error(`[fulfil] qvsp order ${qvspOrder.id || "?"} returned no credentials · shape ${shape}`);
-    await db.from("orders").update({ status: "paid" }).eq("id", orderId);
-    await logToStaff(
-      `⚠️ Order ${orderId}: qvsp accepted the purchase (qvsp order ${qvspOrder.id || "unknown"}) but sent no readable login yet. ` +
-        `Will retry. Response shape (values hidden): \`${shape.slice(0, 600)}\``
-    );
-    return false;
-  }
+  const creds = qvspOrder.credentials!;  // non-null; checked inside the loop
 
   // Encrypt and persist as an inventory row so /orders/[id] page shows them.
   const { data: inv, error: invErr } = await db
@@ -156,7 +210,9 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
       cost_cents: null,
       login_enc: encrypt(creds.login),
       password_enc: encrypt(creds.password),
-      email_enc: encrypt(creds.email ?? ""),
+      // Prefer the email we just scraped from the Riot account (verified
+      // email) over whatever qvsp claims. qvsp often leaves this blank.
+      email_enc: encrypt(verifiedEmail ?? creds.email ?? ""),
       email_password_enc: encrypt(creds.email_password ?? ""),
       notes: `Region ${row.region} · ${row.skin_count} skins · peak ${row.peak ?? "N/A"}`,
       status: "sold",
@@ -187,28 +243,83 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     .eq("id", orderId);
 
   if (user?.discord_id) {
-    // Inline creds + 10-min test window + email-coming-soon note. The
-    // extractor callback will DM a second time with the recovery email.
-    await notifyDiscordUser(
-      user.discord_id,
-      `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n\n` +
-        `**Login:** \`${creds.login}\`\n` +
-        `**Password:** \`${creds.password}\`\n\n` +
-        `⏱️ **Test it now — you have 10 minutes.** Log in, and if anything's wrong (wrong password, banned, asks for a code…) ` +
-        `press **"No, there's a problem"** on the order page to get a replacement or your money back.\n` +
-        `⏳ Pulling your recovery email now — I'll DM it to you in about a minute.\n` +
-        `Full details: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
-        `Change the account and email passwords on first login.`
-    ).catch((e) => console.error("[fulfil] DM failed", e));
+    // Two DM shapes based on whether verify succeeded.
+    //  - ok    → single DM with login + password + email, no test window
+    //            (we already logged in successfully, no need to re-test)
+    //  - other → login + password now, email arrives in a second DM from
+    //            the async /extract callback, plus the 10-min test window
+    if (verifyVerdict === "ok" && verifiedEmail) {
+      await notifyDiscordUser(
+        user.discord_id,
+        `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n` +
+          `✔️ We tested the login ourselves and it works.\n\n` +
+          `**Login:** \`${creds.login}\`\n` +
+          `**Password:** \`${creds.password}\`\n` +
+          `**Recovery email:** \`${verifiedEmail}\`\n\n` +
+          `Full details: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
+          `Change the account and email passwords on first login.`
+      ).catch((e) => console.error("[fulfil] DM failed", e));
+    } else {
+      await notifyDiscordUser(
+        user.discord_id,
+        `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n\n` +
+          `**Login:** \`${creds.login}\`\n` +
+          `**Password:** \`${creds.password}\`\n\n` +
+          `⏱️ **Test it now — you have 10 minutes.** Log in, and if anything's wrong (wrong password, banned, asks for a code…) ` +
+          `press **"No, there's a problem"** on the order page to get a replacement or your money back.\n` +
+          `⏳ Pulling your recovery email now — I'll DM it to you in about a minute.\n` +
+          `Full details: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
+          `Change the account and email passwords on first login.`
+      ).catch((e) => console.error("[fulfil] DM failed", e));
+    }
   }
 
-  // Fire-and-forget email extraction for EVERY buyer (no tier gate).
-  // Worker POSTs back to /api/worker/callback with the extracted email
-  // or a failure. On success, the callback DMs the buyer again with the
-  // email + a reminder of which login it's for.
-  void dispatchEmailExtraction(orderId, creds.login, creds.password);
+  // Dispatch the async email extractor only when verify didn't already
+  // get us the email (captcha / timeout / worker_error paths).
+  if (!verifiedEmail) {
+    void dispatchEmailExtraction(orderId, creds.login, creds.password);
+  }
 
   return true;
+}
+
+/** Call the Fly worker's /verify endpoint synchronously and wait up to 90s
+ *  for a verdict. Returns the verdict, or a synthetic worker_error if the
+ *  dispatch itself fails. */
+async function verifyCredsWithWorker(
+  orderId: string,
+  login: string,
+  password: string
+): Promise<
+  | { ok: true; email: string }
+  | { ok: false; reason: string; video_url?: string; detail?: string }
+> {
+  const workerUrl = process.env.EXTRACTOR_WORKER_URL;
+  const workerSecret = process.env.EXTRACTOR_WORKER_SECRET;
+  if (!workerUrl || !workerSecret) return { ok: false, reason: "worker_disabled" };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90_000);
+  try {
+    const res = await fetch(`${workerUrl.replace(/\/$/, "")}/verify`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${workerSecret}`,
+      },
+      body: JSON.stringify({ order_id: orderId, login, password }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, reason: "worker_error", detail: `${res.status} ${text.slice(0, 200)}` };
+    }
+    return (await res.json()) as Awaited<ReturnType<typeof verifyCredsWithWorker>>;
+  } catch (e) {
+    return { ok: false, reason: "worker_error", detail: String(e).slice(0, 200) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Fire the Fly worker to log in and extract the Riot-recovery email. */

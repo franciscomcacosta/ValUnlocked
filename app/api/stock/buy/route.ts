@@ -22,6 +22,9 @@ import { createInvoice } from "@/lib/nowpayments";
 import { fulfilOrder } from "@/lib/fulfil";
 
 export const runtime = "nodejs";
+// Credit-covered buys call fulfilOrder inline, which waits up to 90s on
+// the Fly worker's /verify endpoint. Keep headroom.
+export const maxDuration = 120;
 
 const REGIONS = new Set(["EU", "NA", "AP", "KR", "LATAM", "BR"]);
 

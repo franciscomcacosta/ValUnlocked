@@ -1,5 +1,8 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// fulfilOrder waits up to 90s on the Fly worker's /verify endpoint.
+// Keep ~30s of headroom for buyAccount, DB writes, DM, etc.
+export const maxDuration = 120;
 
 // NOWPayments IPN handler. Branches on the order_id prefix:
 //   "sub_<uuid>"  → subscription invoice (lib/subs.applyPaidSubInvoice)

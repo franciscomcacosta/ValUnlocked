@@ -603,8 +603,8 @@ function StockTab({ me }: { me: Me }) {
     if (sel.kind === "bracket") {
       return {
         kind: "bracket" as const,
-        range: sel.row.label,
-        tc: bracketTierColor(sel.row.label),
+        range: bracketRange(sel.row.label),
+        tc: bracketTierColor(sel.row.bracket),
         // Name shown in the title row under the hero. Just the range —
         // the hero already says "Skins · random account" so appending
         // "skins" again would read "1-25 Skins" (above) then "1-25 skins
@@ -787,8 +787,10 @@ function StockTab({ me }: { me: Me }) {
                 <div
                   style={{
                     display: "grid",
+                    height: "100%",
+                    minHeight: "380px",
                     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                    gridAutoRows: "minmax(180px, 1fr)",
+                    gridTemplateRows: "repeat(2, minmax(0, 1fr))",
                     gap: "10px",
                   }}
                 >
@@ -1217,31 +1219,25 @@ function SkinGrid({
   );
 }
 
-// Bracket → tier visual mapping. Lower = standard red; higher = Valorant's
-// Premium/Exclusive/Ultra palette. Each bracket also gets an intensity
-// multiplier that drives the radial-gradient background behind the tile,
-// so a 200+ card doesn't just use gold text — it feels gold.
-type BracketVisual = {
-  color: string;              // text + accent
-  intensity: number;          // 0.0 – 1.0 background saturation
-  label: string;              // tier-ish copy shown under the range
+// Bracket → tile accent, keyed by bracket id (s_1_25 …) so it never depends
+// on the human label's dash/suffix. Colours follow the designer's canvas:
+// blue → teal → pink → orange → gold → red as the skin count climbs.
+const BRACKET_COLOR: Record<string, string> = {
+  s_1_25: "#5a9fe2",
+  s_26_50: "#009587",
+  s_51_100: "#d1548d",
+  s_101_150: "#f5955b",
+  s_151_200: "#fad663",
+  s_200_plus: "#ff4655",
 };
 
-const BRACKET_VISUAL: Record<string, BracketVisual> = {
-  "1-25":    { color: "var(--vu-red)",        intensity: 0.25, label: "Select"    },
-  "26-50":   { color: "var(--vu-red)",        intensity: 0.45, label: "Select+"   },
-  "51-100":  { color: "var(--tier-premium)",  intensity: 0.60, label: "Premium"   },
-  "101-150": { color: "var(--tier-exclusive)",intensity: 0.75, label: "Exclusive" },
-  "151-200": { color: "var(--tier-ultra)",    intensity: 0.88, label: "Ultra"     },
-  "200+":    { color: "var(--tier-ultra)",    intensity: 1.00, label: "Whale"     },
-};
-
-function bracketVisual(label: string): BracketVisual {
-  return BRACKET_VISUAL[label] ?? { color: "var(--vu-red)", intensity: 0.25, label: "" };
+function bracketTierColor(bracket: string): string {
+  return BRACKET_COLOR[bracket] ?? "var(--vu-red)";
 }
 
-function bracketTierColor(label: string): string {
-  return bracketVisual(label).color;
+// "1–25 skins" → "1–25"
+function bracketRange(label: string): string {
+  return label.replace(/\s*skins?$/i, "").trim();
 }
 
 function BracketTile({
@@ -1254,27 +1250,18 @@ function BracketTile({
 }) {
   const soldOut = row.available === 0;
   const hasDiscount = row.price.discountPct > 0;
-  const vis = bracketVisual(row.label);
-  const tc = vis.color;
+  const tc = bracketTierColor(row.bracket);
+  const range = bracketRange(row.label);
+  const availColor = soldOut ? "#cbd5e1" : row.available < 10 ? "#fcd34d" : "#86efac";
   return (
     <button
       disabled={soldOut}
       onClick={onPick}
       className={`tile cs ${selected ? "on" : ""}`}
-      style={{
-        ["--tc" as string]: tc,
-        // Full radial-gradient tinted background that escalates with
-        // bracket intensity. Low brackets = subtle wash; Ultra/Whale =
-        // saturated gold aura that signals premium.
-        backgroundImage: soldOut
-          ? undefined
-          : `radial-gradient(circle at 50% 110%, color-mix(in srgb, ${tc} ${Math.round(
-              vis.intensity * 70
-            )}%, transparent) 0%, transparent 65%)`,
-      }}
-      aria-label={`${row.label} skins`}
+      style={{ ["--tc" as string]: tc, width: "100%", height: "100%" }}
+      aria-label={`${range} skins, €${eur(row.price.finalCents)}`}
     >
-      <span className="glow" style={{ opacity: Math.max(0.35, vis.intensity * 0.85) }} />
+      <span className="glow" style={{ opacity: 0.5 }} />
       <span
         style={{
           position: "relative",
@@ -1284,7 +1271,7 @@ function BracketTile({
           padding: "10px 12px 0",
         }}
       >
-        <span className="bc" style={{ fontSize: "13px", fontWeight: 600, color: "var(--vu-ivory-dim)" }}>
+        <span className="bc" style={{ fontSize: "13px", fontWeight: 600, color: "#9aa5b1" }}>
           Random account
         </span>
         <span className="rg">{region}</span>
@@ -1297,38 +1284,10 @@ function BracketTile({
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          gap: "2px",
         }}
       >
-        <span className="h num" style={{ fontSize: "52px", color: "#fff", lineHeight: 1 }}>
-          {row.label}
-        </span>
-        <span
-          className="bc"
-          style={{
-            fontSize: "13px",
-            fontWeight: 700,
-            color: tc,
-            letterSpacing: "0.1em",
-            textShadow: `0 0 12px ${tc}aa`,
-          }}
-        >
-          {vis.label} · Skins
-        </span>
-        {row.label === "1-25" && (
-          <span
-            className="bc"
-            style={{
-              fontSize: "10px",
-              fontWeight: 700,
-              color: "var(--accent-success)",
-              letterSpacing: "0.12em",
-              marginTop: "4px",
-            }}
-          >
-            ★ Always includes a shop skin
-          </span>
-        )}
+        <span className="h num" style={{ fontSize: "52px", color: "#fff" }}>{range}</span>
+        <span className="bc" style={{ fontSize: "15px", fontWeight: 600, color: tc }}>Skins</span>
       </span>
       <span
         style={{
@@ -1338,17 +1297,11 @@ function BracketTile({
           gap: "14px",
           padding: "0 0 8px",
           fontSize: "12px",
-          color: "var(--vu-ivory-dim)",
+          color: "#9aa5b1",
         }}
       >
         <span>
-          Available{" "}
-          <b
-            className="num"
-            style={{ color: soldOut ? "#f87171" : row.available < 3 ? "#fcd34d" : "#86efac" }}
-          >
-            {row.available}
-          </b>
+          Available <b className="num" style={{ color: availColor }}>{soldOut ? "Sold out" : row.available}</b>
         </span>
         <span>Delivery <b style={{ color: "#86efac" }}>Instant</b></span>
       </span>
@@ -1358,7 +1311,7 @@ function BracketTile({
             €{eur(row.price.finalCents)}
           </span>
           {hasDiscount && (
-            <span style={{ fontSize: "12px", color: "var(--vu-mute-soft)", textDecoration: "line-through" }}>
+            <span style={{ fontSize: "12px", color: "#8b97a5", textDecoration: "line-through" }}>
               €{eur(row.price.publicCents)}
             </span>
           )}

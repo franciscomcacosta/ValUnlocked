@@ -1933,15 +1933,25 @@ function PurchasesTab() {
             </tr>
           </thead>
           <tbody>
-            {orders.map((o) => (
+            {orders.map((o) => {
+              // Scrub any upstream-supplier string that might sneak in from
+              // legacy DB rows. User-facing copy only.
+              const scrub = (s: string | null | undefined, fallback: string): string => {
+                if (!s) return fallback;
+                const cleaned = s.replace(/qvsp\s*·\s*/i, "").replace(/qvsp/gi, "").trim();
+                return cleaned || fallback;
+              };
+              const accountName = scrub(o.products?.name, "Random account");
+              const regionLabel = scrub(o.products?.region, "—");
+              return (
               <tr key={o.id} onClick={() => (window.location.href = `/orders/${o.id}`)}>
                 <td style={{ paddingLeft: "16px" }}>
                   <span style={{ display: "flex", flexDirection: "column" }}>
                     <span className="bc" style={{ fontWeight: 700, fontSize: "17px", lineHeight: 1.1 }}>
-                      {o.products?.name ?? "Random account"}
+                      {accountName}
                     </span>
                     <span className="mut mono" style={{ fontSize: "11px" }}>
-                      {o.id.slice(0, 8)} · {o.products?.region ?? "—"}
+                      VU-{o.id.slice(0, 8).toUpperCase()}{regionLabel && regionLabel !== "—" ? ` · ${regionLabel}` : ""}
                     </span>
                   </span>
                 </td>
@@ -1962,7 +1972,8 @@ function PurchasesTab() {
                   </a>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -2861,7 +2872,7 @@ function AdminTab() {
     <section className="pn cut" style={{ height: "100%", padding: "20px 24px" }}>
       <span className="lbl">Admin</span>
       <p className="mut" style={{ marginTop: "8px" }}>
-        Admin controls — manage credit grants, review orders, trigger qvsp sync.
+        Admin controls — manage credit grants, review orders, trigger inventory sync.
       </p>
     </section>
   );

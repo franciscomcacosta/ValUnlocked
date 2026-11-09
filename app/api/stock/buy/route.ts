@@ -276,8 +276,17 @@ async function reserveAndInvoice(args: ReserveArgs): Promise<Response> {
 
 // ─── Placeholder product rows (satisfies the products.id FK) ───
 
+// Product-row names are what the buyer sees in My Purchases + /orders/[id].
+// They MUST NOT mention qvsp — knowing the upstream supplier lets customers
+// cut us out. Use clean, user-facing copy (bracket label, skin name, "Specific
+// account"). Slugs stay internal (DB only) so legacy rows resolve unchanged.
+//
+// Historical rows already have "QVSP · ..." names — they're rewritten by the
+// migration helper in this file's SQL fix-up script (run once), but the code
+// below is what prevents NEW rows from leaking the supplier name.
+
 async function resolveBracketProductId(bracket: BracketName): Promise<string> {
-  const slug = `qvsp-${bracket}`;
+  const slug = `qvsp-${bracket}`;       // internal slug stays as-is for lookup
   const { data: existing } = await db.from("products").select("id").eq("slug", slug).maybeSingle();
   if (existing?.id) return existing.id;
   const label = SKIN_BRACKETS.find((b) => b.name === bracket)!.label;
@@ -285,12 +294,12 @@ async function resolveBracketProductId(bracket: BracketName): Promise<string> {
     .from("products")
     .insert({
       slug,
-      name: `QVSP · ${label}`,
-      region: "QVSP",
+      name: `${label} skins`,                // ← user-facing: "26-50 skins"
+      region: "—",
       price_cents: 100,
       currency: "eur",
       active: false,
-      description: "Internal placeholder for QVSP bracket orders.",
+      description: "Random account from the chosen skin bracket.",
     })
     .select("id")
     .single();
@@ -306,12 +315,12 @@ async function resolveXrayProductId(): Promise<string> {
     .from("products")
     .insert({
       slug,
-      name: "QVSP · X-RAY (specific account)",
-      region: "QVSP",
+      name: "Specific account",              // ← user-facing
+      region: "—",
       price_cents: 100,
       currency: "eur",
       active: false,
-      description: "Internal placeholder for Ultra-only specific-account purchases.",
+      description: "Ultra-member specific-account pick via X-RAY.",
     })
     .select("id")
     .single();
@@ -327,12 +336,12 @@ async function resolveFeaturedSkinProductId(skinLabel: string): Promise<string> 
     .from("products")
     .insert({
       slug,
-      name: `QVSP · ${skinLabel}`,
-      region: "QVSP",
+      name: skinLabel,                       // ← user-facing: "Prime Vandal"
+      region: "—",
       price_cents: 100,
       currency: "eur",
       active: false,
-      description: `Internal placeholder for guaranteed ${skinLabel} orders.`,
+      description: `Guaranteed account containing ${skinLabel}.`,
     })
     .select("id")
     .single();

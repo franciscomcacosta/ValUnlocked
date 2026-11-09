@@ -46,12 +46,19 @@ const TIER_RANK: Record<string, number> = {
 };
 
 // Strip qvsp-style variant suffixes to collapse ("Reaver Vandal",
-// "Reaver Vandal (4 Levels)") into one skin.
+// "Reaver Vandal (4 Levels)") into one skin. Also filters out qvsp's
+// placeholder entries like "invalid_skin" or empty strings which would
+// otherwise show up as broken tiles.
 function normalizeSkinName(raw: string): string {
-  return raw
+  const cleaned = raw
     .replace(/\s*\(\d+\s*Level(?:s)?\)\s*$/i, "")
     .replace(/\s*\(5\s*Levels,\s*5\s*Variants\)\s*$/i, "")
     .trim();
+  // qvsp known junk values we never want to surface as a skin tile.
+  if (!cleaned || /^invalid_?skin$/i.test(cleaned) || /^unknown$/i.test(cleaned)) {
+    return "";
+  }
+  return cleaned;
 }
 
 // Guess the weapon name from the skin's displayName, used for the label

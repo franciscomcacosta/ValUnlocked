@@ -1244,7 +1244,12 @@ function SkinTile({
               lineHeight: 1.1,
             }}
           >
-            {row.label}
+            {/* Strip weapon from label so "Phaseguard Ghost" → "Phaseguard"
+                under the "GHOST" weapon row above. Keeps the big strip
+                readable instead of "GHOST / PHASEGUARD GHOST". */}
+            {row.label.endsWith(` ${row.weapon}`)
+              ? row.label.slice(0, -row.weapon.length - 1)
+              : row.label}
           </span>
         </span>
         <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>

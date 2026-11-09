@@ -359,11 +359,27 @@ input, select, textarea {
   100%    { transform: rotate(14deg); }
 }
 
-/* === Reduced motion === */
+/* === Reduced motion ===
+ * We keep the signature hero animations (marquee, lock-arm snap, live
+ * indicator ping, discord button shine on hover) because they're core
+ * to the brand's "live stock" feel. We disable rise-in entrance effects,
+ * cross-tile pulses and anything that moves on scroll/load so motion-
+ * sensitive viewers still get a static, legible page.
+ *
+ * If you want to kill EVERY animation again for a specific user, we can
+ * expose a "Reduce motion" toggle in /preferences later.
+ */
 @media (prefers-reduced-motion: reduce) {
-  *, *:before, *:after {
+  .rise,
+  .reveal,
+  .burst,
+  .lift,
+  .feat,
+  .tile:hover .gun,
+  .tile:not(:disabled):hover {
     animation: none !important;
     transition: none !important;
+    transform: none !important;
   }
 }
 

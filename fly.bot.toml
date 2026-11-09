@@ -1,0 +1,17 @@
+# Discord bot on Fly.io — deploy from the repo root:
+#   fly deploy --config fly.bot.toml --ha=false
+app = 'valo-shop-bot'
+primary_region = 'cdg'
+
+[build]
+  dockerfile = 'bot/Dockerfile'
+
+# No [http_service]: the bot only makes outbound connections to Discord,
+# so no public IP, and it never auto-stops.
+[[restart]]
+  policy = 'always'
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256

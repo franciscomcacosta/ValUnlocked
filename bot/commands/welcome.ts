@@ -34,9 +34,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       `**Full-access Valorant accounts — delivered instantly.**\n\n` +
         `Everything you need is on the dashboard. Sign in with this Discord account — your perks, discounts, and purchases sync automatically.\n\n` +
         `**What you get on the dashboard:**\n` +
-        `🛒 Browse the live account shop\n` +
-        `💎 Pick a membership tier (10–50% off accounts)\n` +
-        `👤 Manage your subscription + store credit\n` +
+        `🛒 Browse the live account shop — every region, updated live\n` +
+        `💎 Memberships: **Standard 10%** · **Premium 20%** · **Ultra 30%** off every account\n` +
+        `⚡ Premium & Ultra see new restocks **2 hours early**\n` +
+        `👤 Manage your plan + store credit\n` +
         `📦 View past orders and credentials\n`
     )
     .setFooter({

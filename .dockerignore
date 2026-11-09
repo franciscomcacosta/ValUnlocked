@@ -1,0 +1,13 @@
+# Used by fly deploy --config fly.bot.toml (build context = repo root)
+node_modules
+.next
+.git
+.env
+.env.*
+worker
+watcher
+app
+components
+supabase
+scripts
+*.tsbuildinfo

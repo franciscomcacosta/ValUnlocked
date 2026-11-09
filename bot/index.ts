@@ -36,7 +36,21 @@ async function loadCommands() {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-client.once(Events.ClientReady, (c) => console.log(`[bot] ready as ${c.user.tag}`));
+client.once(Events.ClientReady, async (c) => {
+  console.log(`[bot] ready as ${c.user.tag}`);
+  // Keep Discord's command list in sync with bot/commands on every start,
+  // so new commands (e.g. /grant) appear without a separate register step.
+  // Guild registration is instant; a single PUT replaces the whole list.
+  const guildId = process.env.DISCORD_GUILD_ID;
+  if (!guildId) return;
+  try {
+    const guild = await c.guilds.fetch(guildId);
+    await guild.commands.set(commands.map((m) => m.data.toJSON() as Parameters<typeof guild.commands.set>[0][number]));
+    console.log(`[bot] registered ${commands.size} commands in ${guild.name}`);
+  } catch (e) {
+    console.error("[bot] command registration failed", e);
+  }
+});
 
 client.on(Events.InteractionCreate, async (interaction) => {
   // Slash command dispatch.
@@ -75,3 +89,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 loadCommands().then(() => client.login(process.env.DISCORD_BOT_TOKEN));
+
+// Clean shutdown on Fly redeploys so the old instance disconnects first.
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    console.log("[bot] stopping");
+    client.destroy().finally(() => process.exit(0));
+  });
+}

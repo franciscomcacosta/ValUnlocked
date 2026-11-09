@@ -499,6 +499,33 @@ function StockTab({ me }: { me: Me }) {
   const [err, setErr] = useState<string>("");
   const [useCredit, setUseCredit] = useState(true);
   const [query, setQuery] = useState<string>("");
+  // Search history for the quick-search chips: { term: timesSearched }.
+  // Kept per browser. Default chips show until the first real search.
+  const [searchHist, setSearchHist] = useState<Record<string, number>>({});
+  const [hiddenDefaults, setHiddenDefaults] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      setSearchHist(JSON.parse(localStorage.getItem("vu_search_hist") ?? "{}") || {});
+      setHiddenDefaults(JSON.parse(localStorage.getItem("vu_search_hidden") ?? "[]") || []);
+    } catch { /* storage blocked */ }
+  }, []);
+  const saveHist = (h: Record<string, number>) => {
+    setSearchHist(h);
+    try { localStorage.setItem("vu_search_hist", JSON.stringify(h)); } catch { /* storage blocked */ }
+  };
+  // Count a search once the user stops typing for a moment.
+  useEffect(() => {
+    const term = query.trim().toLowerCase();
+    if (term.length < 3) return;
+    const h = setTimeout(() => {
+      setSearchHist((prev) => {
+        const next = { ...prev, [term]: (prev[term] ?? 0) + 1 };
+        try { localStorage.setItem("vu_search_hist", JSON.stringify(next)); } catch { /* storage blocked */ }
+        return next;
+      });
+    }, 1200);
+    return () => clearTimeout(h);
+  }, [query]);
   const [skinPage, setSkinPage] = useState<number>(0);
   // Weapon sub-tab filter inside the skin mode.
   // "" = Featured (top-tier curated-ish view: Ultra + Exclusive + a couple Premiums)
@@ -771,6 +798,40 @@ function StockTab({ me }: { me: Me }) {
             <span className="pill g">{TIER_LABEL[me.sub.tier]} −{subDiscountPct}% applied</span>
           )}
           <div style={{ flex: 1, minWidth: 12 }} />
+          {mode === "skin" && (() => {
+            const DEFAULTS = ["champ", "kuron", "reaver"];
+            const histTerms = Object.entries(searchHist).sort((a, b) => b[1] - a[1]).map(([t]) => t);
+            const chips = (histTerms.length ? histTerms : DEFAULTS.filter((d) => !hiddenDefaults.includes(d))).slice(0, 3);
+            const remove = (t: string) => {
+              if (histTerms.length) {
+                const next = { ...searchHist };
+                delete next[t];
+                saveHist(next);
+              } else {
+                const next = [...hiddenDefaults, t];
+                setHiddenDefaults(next);
+                try { localStorage.setItem("vu_search_hidden", JSON.stringify(next)); } catch { /* storage blocked */ }
+              }
+              if (query.trim().toLowerCase() === t) setQuery("");
+            };
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                {chips.map((t) => {
+                  const active = query.trim().toLowerCase() === t;
+                  return (
+                    <span key={t} className={`qchip rise ${active ? "on" : ""}`}>
+                      <button className="qchip-t" onClick={() => setQuery(active ? "" : t)} title={active ? "Clear search" : `Search “${t}”`}>
+                        {t}
+                      </button>
+                      <button className="qchip-x" aria-label={`Remove “${t}”`} onClick={() => remove(t)}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {mode === "skin" && (
             <div style={{ position: "relative", width: "230px", maxWidth: "100%" }}>
               <svg

@@ -13,6 +13,7 @@ import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
 import { xrayPriceForUltra, type SubTier } from "@/lib/pricing";
 
+export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const PAGE_SIZE = 50;

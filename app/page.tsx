@@ -109,7 +109,7 @@ const SAMPLE_FEED = [
 // Root
 // ================================================================
 
-type TabKey = "stock" | "subscribe" | "purchases" | "xray" | "admin";
+type TabKey = "stock" | "subscribe" | "purchases" | "xray" | "autobuy" | "admin";
 
 export default function Page() {
   const [me, setMe] = useState<Me | null>(null);
@@ -176,6 +176,7 @@ export default function Page() {
         )}
         {tab === "purchases" && <PurchasesTab />}
         {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} />}
+        {tab === "autobuy" && <AutobuyTab isUltra={isUltra} onSub={() => setTab("subscribe")} />}
         {tab === "admin" && me.isAdmin && <AdminTab />}
       </main>
     </div>
@@ -227,6 +228,7 @@ function Header({
             { key: "subscribe",  label: "Subscribe",     ultra: false },
             { key: "purchases",  label: "My Purchases",  ultra: false },
             { key: "xray",       label: isUltra ? "⚡ X-RAY" : "🔒 X-RAY", ultra: true },
+            { key: "autobuy",    label: isUltra ? "AUTO-BUY" : "🔒 AUTO-BUY", ultra: true },
           ] as const).map((t) => (
             <button
               key={t.key}
@@ -1894,29 +1896,760 @@ function XrayTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void }) {
     );
   }
 
+  return <XrayInspector />;
+}
+
+// ---- X-RAY inspector --------------------------------------------
+
+type XrayItem = {
+  account_id: string;
+  region: Region;
+  level: number;
+  peak: string;
+  rank: string;
+  skin_count: number;
+  skins: string[] | null;
+  buddies: string[] | null;
+  vp: number | null;
+  vp_value_cents: number | null;
+  last_played: string | null;
+  first_seen_at: string | null;
+  publicCents: number;
+  finalCents: number;
+  savingsCents: number;
+  discountPct: number;
+};
+
+type XraySort = "newest" | "cheapest" | "most_skins" | "highest_peak";
+
+function XrayInspector() {
+  const [region, setRegion] = useState<Region>("EU");
+  const [minSkins, setMinSkins] = useState<string>("0");
+  const [skinSearch, setSkinSearch] = useState<string>("");
+  const [sort, setSort] = useState<XraySort>("newest");
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState<{ items: XrayItem[]; total: number; totalPages: number } | null>(null);
+  const [selected, setSelected] = useState<XrayItem | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string>("");
+
+  useEffect(() => {
+    const params = new URLSearchParams({
+      region,
+      page: String(page),
+      sort,
+    });
+    const ms = parseInt(minSkins, 10) || 0;
+    if (ms > 0) params.set("minSkins", String(ms));
+    if (skinSearch.trim()) params.set("skin", skinSearch.trim());
+
+    let cancelled = false;
+    setData(null);
+    fetch(`/api/stock/xray?${params}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        if (!d.ok) throw new Error(d.error);
+        setData({ items: d.items, total: d.total, totalPages: d.totalPages });
+        if (!selected && d.items.length > 0) setSelected(d.items[0]);
+      })
+      .catch((e) => { if (!cancelled) setData({ items: [], total: 0, totalPages: 0 }); setErr(String(e)); });
+    return () => { cancelled = true; };
+  }, [region, page, sort, minSkins, skinSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [region, sort, minSkins, skinSearch]);
+
+  async function buy(item: XrayItem) {
+    setBusy(true); setErr("");
+    try {
+      const res = await fetch("/api/stock/buy", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ region: item.region, account_id: item.account_id, useCredit: true }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? "buy_failed");
+      if (d.invoiceUrl) window.location.href = d.invoiceUrl;
+      else window.location.href = `/orders/${d.orderId}`;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <section
-      className="pn cut"
+    <div
       style={{
         height: "100%",
-        padding: "24px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
-        gap: "12px",
-        flexDirection: "column",
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1fr)",
+        gap: "16px",
       }}
     >
-      <span className="lbl" style={{ color: "#c9a800" }}>
-        ⚡ X-RAY · account inspector
-      </span>
-      <span className="h" style={{ fontSize: "28px" }}>Coming next</span>
-      <p className="mut" style={{ maxWidth: "440px" }}>
-        Full inventory search is landing in the next phase — pick accounts by
-        exact skinset, min skin count, rank, and region.
-      </p>
-    </section>
+      {/* LEFT: search + table */}
+      <section
+        className="pn cut"
+        style={{
+          padding: "16px 0 0",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          minHeight: 0,
+        }}
+      >
+        <div style={{ padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+          <span className="h" style={{ fontSize: "26px", color: "var(--vu-navy)" }}>
+            X-Ray <span style={{ color: "#c9a800" }}>terminal</span>
+          </span>
+          <div className="seg cy" role="group" aria-label="Region">
+            {REGIONS.map((r) => (
+              <button key={r} className={region === r ? "on" : ""} onClick={() => setRegion(r)}>
+                {REGION_NAME[r]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 110px auto", gap: "8px", alignItems: "end" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span className="lbl" style={{ fontSize: "11px" }}>Skin search</span>
+              <input
+                className="inp"
+                type="search"
+                placeholder="e.g. Reaver, Elderflame…"
+                value={skinSearch}
+                onChange={(e) => setSkinSearch(e.target.value)}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <span className="lbl" style={{ fontSize: "11px" }}>Min skins</span>
+              <input
+                className="inp num"
+                type="number"
+                min="0"
+                value={minSkins}
+                onChange={(e) => setMinSkins(e.target.value)}
+              />
+            </label>
+            <span className="bc num" style={{ height: "38px", display: "inline-flex", alignItems: "center", fontWeight: 700, fontSize: "18px", whiteSpace: "nowrap", color: "var(--vu-navy)" }}>
+              {data ? `${data.total} accounts` : "…"}
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span className="lbl" style={{ fontSize: "11px" }}>Sort</span>
+            <div className="seg" role="group" aria-label="Sort" style={{ flexWrap: "wrap" }}>
+              {([
+                { k: "newest", l: "Newest" },
+                { k: "cheapest", l: "Cheapest" },
+                { k: "most_skins", l: "Most skins" },
+                { k: "highest_peak", l: "Highest peak" },
+              ] as const).map((o) => (
+                <button key={o.k} className={sort === o.k ? "on" : ""} onClick={() => setSort(o.k)}>
+                  {o.l}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          {data === null ? (
+            <div style={{ padding: "32px", textAlign: "center" }} className="mut bc">Searching…</div>
+          ) : data.items.length === 0 ? (
+            <div style={{ padding: "32px 16px", textAlign: "center" }} className="mut">
+              No accounts match these filters. Try a lower minimum or another region.
+            </div>
+          ) : (
+            <table className="tbl click">
+              <thead>
+                <tr>
+                  <th style={{ paddingLeft: "16px" }}>Rank</th>
+                  <th>Peak</th>
+                  <th style={{ textAlign: "right" }}>Level</th>
+                  <th style={{ textAlign: "right" }}>Skins</th>
+                  <th style={{ textAlign: "right" }}>VP</th>
+                  <th style={{ textAlign: "right", paddingRight: "16px" }}>Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((a) => (
+                  <tr
+                    key={a.account_id}
+                    className={selected?.account_id === a.account_id ? "on" : ""}
+                    onClick={() => setSelected(a)}
+                  >
+                    <td style={{ paddingLeft: "16px" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span className="bc" style={{ fontWeight: 700, fontSize: "16px" }}>
+                          {a.rank || "Unranked"}
+                        </span>
+                        <span className="rg" style={{ background: "var(--vu-navy)" }}>{a.region}</span>
+                      </span>
+                    </td>
+                    <td className="mut" style={{ fontSize: "12px" }}>{a.peak || "—"}</td>
+                    <td className="num" style={{ textAlign: "right" }}>{a.level}</td>
+                    <td className="num" style={{ textAlign: "right", fontWeight: 700 }}>{a.skin_count}</td>
+                    <td className="num mut" style={{ textAlign: "right" }}>{a.vp ?? 0}</td>
+                    <td style={{ textAlign: "right", paddingRight: "16px" }}>
+                      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                        <span className="bc num" style={{ fontWeight: 700, fontSize: "16px", color: "#a68a00", lineHeight: 1 }}>
+                          €{eur(a.finalCents)}
+                        </span>
+                        {a.discountPct > 0 && (
+                          <span className="num mut" style={{ fontSize: "11px", textDecoration: "line-through" }}>
+                            €{eur(a.publicCents)}
+                          </span>
+                        )}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {data && data.totalPages > 1 && (
+          <div style={{ flex: "none", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px 12px", borderTop: "1px solid var(--vu-divider)" }}>
+            <button className="btn btn-soft cs btn-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+              ← Prev
+            </button>
+            <span className="bc num" style={{ fontWeight: 600, fontSize: "15px" }}>
+              Page {page} of {data.totalPages}
+            </span>
+            <button className="btn btn-soft cs btn-sm" onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))} disabled={page >= data.totalPages}>
+              Next →
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* RIGHT: inspector */}
+      <section className="pn cut" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0 }}>
+        {!selected ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }} className="mut">
+            Pick an account to inspect it.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
+                <span className="h" style={{ fontSize: "28px", color: "var(--vu-navy)" }}>
+                  {selected.rank || "Unranked"}
+                </span>
+                <span className="mut num" style={{ fontSize: "12px" }}>
+                  {REGION_NAME[selected.region]} · <span className="mono">{selected.account_id.slice(0, 10)}…</span>
+                  {selected.first_seen_at && ` · listed ${timeAgo(selected.first_seen_at)}`}
+                </span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                <span className="h num" style={{ fontSize: "30px", color: "#a68a00" }}>
+                  €{eur(selected.finalCents)}
+                </span>
+                {selected.discountPct > 0 && (
+                  <span className="num" style={{ fontSize: "12px" }}>
+                    <span className="mut" style={{ textDecoration: "line-through" }}>
+                      €{eur(selected.publicCents)}
+                    </span>{" "}
+                    <span style={{ color: "var(--accent-success)", fontWeight: 600 }}>
+                      −{Math.round(selected.discountPct * 100)}%
+                    </span>
+                  </span>
+                )}
+              </div>
+              <button
+                className="btn btn-red cut"
+                style={{ height: "50px", minWidth: "120px" }}
+                onClick={() => buy(selected)}
+                disabled={busy}
+              >
+                {busy ? "…" : "Buy"}
+              </button>
+            </div>
+
+            {err && (
+              <div style={{ padding: "8px 12px", background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px" }}>
+                {err}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: "4px" }}>
+              {[
+                { k: "Level", v: String(selected.level), c: "var(--vu-navy)" },
+                { k: "Skins", v: String(selected.skin_count), c: "var(--vu-navy)" },
+                { k: "Peak", v: selected.peak || "—", c: "var(--vu-navy)" },
+                { k: "VP", v: String(selected.vp ?? 0), c: "var(--vu-mute)" },
+                { k: "VP €", v: selected.vp_value_cents ? `€${eur(selected.vp_value_cents)}` : "—", c: "var(--vu-mute)" },
+                { k: "Last played", v: selected.last_played ? timeAgo(selected.last_played) : "—", c: "var(--vu-mute)" },
+              ].map((s) => (
+                <div key={s.k} style={{ background: "var(--vu-surface-alt)", padding: "5px 8px", display: "flex", flexDirection: "column", minWidth: 0 }}>
+                  <span className="lbl" style={{ fontSize: "11px" }}>{s.k}</span>
+                  <span className="bc num" style={{ fontWeight: 700, fontSize: "18px", color: s.c, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {s.v}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span className="lbl" style={{ color: "var(--vu-navy)" }}>Inventory</span>
+              <span className="mut num" style={{ fontSize: "12px" }}>
+                {selected.skin_count} skins · every skin shown
+              </span>
+            </div>
+            <div
+              style={{
+                flex: 1,
+                minHeight: "90px",
+                overflowY: "auto",
+                display: "grid",
+                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                gridAutoRows: "80px",
+                gap: "6px",
+                alignContent: "start",
+                paddingRight: "4px",
+              }}
+            >
+              {(selected.skins ?? []).slice(0, 60).map((s, i) => (
+                <div
+                  key={`${s}-${i}`}
+                  className="tile cs"
+                  style={{ ["--tc" as string]: "var(--tier-premium)", cursor: "default", height: "80px" }}
+                >
+                  <span className="glow" />
+                  <span style={{ position: "relative", flex: 1, minHeight: "16px", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 8px", textAlign: "center" }}>
+                    <span className="bc" style={{ fontSize: "11px", color: "#fff", fontWeight: 600, lineHeight: 1.15 }}>
+                      {s}
+                    </span>
+                  </span>
+                </div>
+              ))}
+              {(selected.skins ?? []).length > 60 && (
+                <div className="mut bc" style={{ gridColumn: "span 6", textAlign: "center", padding: "10px", fontSize: "12px" }}>
+                  +{(selected.skins ?? []).length - 60} more skins not shown
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function timeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+// ================================================================
+// Auto-Buy tab (Ultra-only)
+// ================================================================
+
+type AutobuyRule = {
+  id: string;
+  name: string;
+  active: boolean;
+  regions: string[];
+  kinds: string[];
+  min_skins: number | null;
+  max_price_cents: number;
+  min_level: number | null;
+  min_peak: string | null;
+  required_skins: string[];
+  max_buys_per_day: number;
+  min_credit_cents: number;
+  bought_today: number;
+  bought_today_date: string;
+  last_fired_at: string | null;
+  created_at: string;
+};
+
+function AutobuyTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void }) {
+  if (!isUltra) {
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="cut" style={{ width: "460px", maxWidth: "100%", padding: "28px", display: "flex", flexDirection: "column", gap: "14px", background: "var(--vu-navy)", color: "var(--vu-ivory)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span className="cs" style={{ width: "44px", height: "44px", background: "#ffd400", color: "var(--vu-navy)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="4" y="11" width="16" height="10" rx="1" />
+                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+              </svg>
+            </span>
+            <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>Auto-Buy is Ultra-only</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {[
+              "Buy matching drops the instant they land",
+              "Set budget, rank floor, must-include skins",
+              "Capped daily so you don't run through your credit",
+              "Shares drops fairly across all Ultra subscribers (round-robin)",
+            ].map((p) => (
+              <span key={p} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffd400" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+                {p}
+              </span>
+            ))}
+          </div>
+          <button className="btn btn-gold cut btn-lg" onClick={onSub}>Upgrade to Ultra — €59.99/mo</button>
+        </div>
+      </div>
+    );
+  }
+  return <AutobuyManager />;
+}
+
+function AutobuyManager() {
+  const [rules, setRules] = useState<AutobuyRule[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Partial<AutobuyRule>>({
+    name: "New rule",
+    regions: [],
+    kinds: ["skinned"],
+    min_skins: 0,
+    max_price_cents: 5000,
+    min_level: 0,
+    min_peak: null,
+    required_skins: [],
+    max_buys_per_day: 5,
+    min_credit_cents: 5000,
+  });
+  const [matching, setMatching] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string>("");
+
+  async function reload() {
+    const res = await fetch("/api/autobuy");
+    const d = await res.json();
+    if (d.ok) setRules(d.rules);
+  }
+  useEffect(() => { reload(); }, []);
+
+  // Preview "matching right now" whenever the draft changes
+  useEffect(() => {
+    let cancelled = false;
+    const h = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/autobuy/matches", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(draft),
+        });
+        const d = await res.json();
+        if (!cancelled && d.ok) setMatching(d.matching);
+      } catch {}
+    }, 400);
+    return () => { cancelled = true; clearTimeout(h); };
+  }, [JSON.stringify(draft)]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function selectRule(r: AutobuyRule) {
+    setSelectedId(r.id);
+    setDraft({ ...r });
+    setErr("");
+  }
+
+  function newRule() {
+    setSelectedId(null);
+    setDraft({
+      name: "New rule",
+      regions: [],
+      kinds: ["skinned"],
+      min_skins: 0,
+      max_price_cents: 5000,
+      min_level: 0,
+      min_peak: null,
+      required_skins: [],
+      max_buys_per_day: 5,
+      min_credit_cents: 5000,
+    });
+    setErr("");
+  }
+
+  async function save() {
+    setBusy(true); setErr("");
+    try {
+      const url = selectedId ? `/api/autobuy/${selectedId}` : "/api/autobuy";
+      const method = selectedId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? "save_failed");
+      await reload();
+      if (!selectedId) setSelectedId(d.rule.id);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleActive(r: AutobuyRule) {
+    setBusy(true);
+    await fetch(`/api/autobuy/${r.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ active: !r.active }),
+    });
+    await reload();
+    setBusy(false);
+  }
+
+  async function deleteRule(r: AutobuyRule) {
+    if (!confirm(`Delete rule "${r.name}"?`)) return;
+    setBusy(true);
+    await fetch(`/api/autobuy/${r.id}`, { method: "DELETE" });
+    if (selectedId === r.id) newRule();
+    await reload();
+    setBusy(false);
+  }
+
+  return (
+    <div
+      style={{
+        height: "100%",
+        display: "grid",
+        gridTemplateColumns: "240px minmax(0, 1fr) 280px",
+        gap: "16px",
+      }}
+    >
+      {/* LEFT: rules list */}
+      <section className="pn cut" style={{ padding: "16px 0", display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <div style={{ padding: "0 16px 10px" }}>
+          <span className="lbl">Auto-buy <span style={{ color: "#c9a800" }}>rules</span></span>
+          <p className="mut" style={{ fontSize: "12px", marginTop: "4px", marginBottom: 0 }}>
+            Rules buy matching X-Ray drops the instant they land, paid from your credit.
+          </p>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          {rules === null ? (
+            <div style={{ padding: "16px", textAlign: "center" }} className="mut bc">Loading…</div>
+          ) : rules.length === 0 ? (
+            <div style={{ padding: "24px 16px", textAlign: "center" }} className="mut">
+              No rules yet. Click <b>+ New rule</b> below.
+            </div>
+          ) : (
+            rules.map((r) => (
+              <button
+                key={r.id}
+                className={`xrow ${selectedId === r.id ? "on" : ""}`}
+                onClick={() => selectRule(r)}
+                style={{ height: "72px" }}
+              >
+                <span style={{ width: "10px", height: "10px", background: r.active ? "var(--accent-green)" : "var(--vu-mute)", flex: "none", borderRadius: "50%" }} />
+                <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <span className="bc" style={{ fontWeight: 700, fontSize: "15px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {r.name}
+                  </span>
+                  <span className="mut num" style={{ fontSize: "11px" }}>
+                    {r.regions.length === 0 ? "Any region" : r.regions.join(",")} · €{eur(r.max_price_cents)} max
+                  </span>
+                </span>
+                <span className="bc num" style={{ fontSize: "11px", color: r.active ? "var(--accent-success)" : "var(--vu-mute)" }}>
+                  {r.active ? "ACTIVE" : "PAUSED"}
+                  <br />
+                  <span style={{ color: "var(--vu-mute)" }}>{r.bought_today} bought</span>
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+        <button className="btn btn-soft cs" style={{ margin: "12px 16px 0" }} onClick={newRule}>
+          + New rule
+        </button>
+      </section>
+
+      {/* CENTER: editor */}
+      <section className="pn cut" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0, overflow: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl">Rule name</span>
+            <input
+              className="inp"
+              value={draft.name ?? ""}
+              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+            />
+          </div>
+          {selectedId && rules?.find((r) => r.id === selectedId) && (
+            <div className="seg" style={{ flex: "none" }}>
+              {(() => {
+                const r = rules.find((x) => x.id === selectedId)!;
+                return (
+                  <>
+                    <button className={r.active ? "on" : ""} onClick={() => toggleActive(r)}>Active</button>
+                    <button className={!r.active ? "on" : ""} onClick={() => toggleActive(r)}>Paused</button>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <span className="lbl">Region</span>
+          <div className="seg" style={{ marginTop: "4px", flexWrap: "wrap" }}>
+            <button
+              className={(draft.regions ?? []).length === 0 ? "on" : ""}
+              onClick={() => setDraft((d) => ({ ...d, regions: [] }))}
+            >
+              Any
+            </button>
+            {REGIONS.map((r) => {
+              const active = (draft.regions ?? []).includes(r);
+              return (
+                <button
+                  key={r}
+                  className={active ? "on" : ""}
+                  onClick={() => setDraft((d) => {
+                    const cur = new Set(d.regions ?? []);
+                    if (cur.has(r)) cur.delete(r); else cur.add(r);
+                    return { ...d, regions: Array.from(cur) };
+                  })}
+                >
+                  {r}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl">Max price (after −30%)</span>
+            <input
+              className="inp num"
+              type="number"
+              min="1"
+              step="0.01"
+              value={((draft.max_price_cents ?? 0) / 100).toFixed(2)}
+              onChange={(e) => setDraft((d) => ({ ...d, max_price_cents: Math.round(parseFloat(e.target.value) * 100) || 0 }))}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl">Min skins</span>
+            <input
+              className="inp num"
+              type="number"
+              min="0"
+              value={draft.min_skins ?? 0}
+              onChange={(e) => setDraft((d) => ({ ...d, min_skins: parseInt(e.target.value, 10) || 0 }))}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl">Min level</span>
+            <input
+              className="inp num"
+              type="number"
+              min="0"
+              value={draft.min_level ?? 0}
+              onChange={(e) => setDraft((d) => ({ ...d, min_level: parseInt(e.target.value, 10) || 0 }))}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl">Min peak rank</span>
+            <select
+              className="inp"
+              value={draft.min_peak ?? ""}
+              onChange={(e) => setDraft((d) => ({ ...d, min_peak: e.target.value || null }))}
+            >
+              <option value="">Any</option>
+              {["iron", "bronze", "silver", "gold", "platinum", "diamond", "ascendant", "immortal", "radiant"].map((r) => (
+                <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl">Max buys / day</span>
+            <input
+              className="inp num"
+              type="number"
+              min="1"
+              max="20"
+              value={draft.max_buys_per_day ?? 5}
+              onChange={(e) => setDraft((d) => ({ ...d, max_buys_per_day: parseInt(e.target.value, 10) || 1 }))}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <span className="lbl">Pause under € credit</span>
+            <input
+              className="inp num"
+              type="number"
+              min="0"
+              step="0.01"
+              value={((draft.min_credit_cents ?? 0) / 100).toFixed(2)}
+              onChange={(e) => setDraft((d) => ({ ...d, min_credit_cents: Math.round(parseFloat(e.target.value) * 100) || 0 }))}
+            />
+          </label>
+        </div>
+
+        {err && (
+          <div style={{ padding: "8px 12px", background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px" }}>
+            {err}
+          </div>
+        )}
+
+        <div style={{ flex: 1 }} />
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          {selectedId && (
+            <button
+              className="btn btn-soft cs"
+              style={{ color: "var(--accent-rose)" }}
+              onClick={() => {
+                const r = rules?.find((x) => x.id === selectedId);
+                if (r) deleteRule(r);
+              }}
+            >
+              Delete rule
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button className="btn btn-red cs" onClick={save} disabled={busy}>
+            {busy ? "…" : selectedId ? "Save changes" : "Save & activate"}
+          </button>
+        </div>
+      </section>
+
+      {/* RIGHT: matches preview */}
+      <section className="pn cut" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+          <span className="lbl">Matching right now</span>
+          <span className="h num" style={{ fontSize: "28px", color: matching === null ? "var(--vu-mute)" : matching > 0 ? "var(--accent-success)" : "var(--vu-mute)" }}>
+            {matching ?? "…"}
+          </span>
+        </div>
+        <p className="mut" style={{ fontSize: "12px", marginTop: 0 }}>
+          {matching === 0
+            ? "No listed account fits this rule right now. It fires on the next drop that does."
+            : matching === null
+            ? "Checking inventory…"
+            : `${matching} ${matching === 1 ? "account" : "accounts"} in stock match these filters. New matches fire your rule as they come in.`}
+        </p>
+        <div style={{ flex: 1 }} />
+        <div className="cut" style={{ padding: "12px 14px", background: "var(--vu-surface-alt)" }}>
+          <span className="lbl">Wallet</span>
+          <div className="h num" style={{ fontSize: "24px", marginTop: "4px" }}>—</div>
+          <p className="mut" style={{ fontSize: "11px", marginTop: "4px", marginBottom: 0 }}>
+            Rules pause automatically when your credit drops below the
+            configured threshold. Top up on the <b>Subscribe</b> tab.
+          </p>
+        </div>
+      </section>
+    </div>
   );
 }
 

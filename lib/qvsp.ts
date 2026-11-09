@@ -160,11 +160,74 @@ export async function buyAccount(opts: { kind: QvspKind; id: string; orderRef?: 
   // while swapping to a different listing gets a fresh key.
   const idempotencyKey =
     "vu_" + createHash("sha256").update(`${opts.orderRef ?? "manual"}:${opts.kind}:${opts.id}`).digest("hex").slice(0, 40);
-  return call<QvspOrder>("/orders", {
+  const raw = await call<unknown>("/orders", {
     method: "POST",
     headers: { "idempotency-key": idempotencyKey },
     body: JSON.stringify({ kind: opts.kind, id: opts.id, idempotency_key: idempotencyKey }),
   });
+  let order = normalizeOrder(raw);
+  // Some responses only confirm the order; credentials come from GET /orders/:id
+  // (possibly a moment later). Poll briefly.
+  for (let i = 0; i < 4 && order.id && !order.credentials; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 1500));
+    try {
+      order = { ...order, ...normalizeOrder(await call<unknown>(`/orders/${encodeURIComponent(order.id)}`)), id: order.id };
+    } catch {
+      /* keep what we have */
+    }
+  }
+  return order;
+}
+
+// ─── Response normalising (qvsp has changed shapes before) ─────────────
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const str = (v: unknown) => (typeof v === "string" && v.trim() ? v : typeof v === "number" ? String(v) : null);
+
+/** Finds a {login/username, password, ...} object anywhere in the body. */
+function findCreds(o: unknown, depth = 0): QvspCredentials | null {
+  if (!isObj(o) || depth > 5) return null;
+  const login = str(o.login) ?? str(o.username) ?? str(o.user) ?? str(o.riot_username) ?? str(o.account_login);
+  const password = str(o.password) ?? str(o.pass) ?? str(o.account_password);
+  if (login && password) {
+    return {
+      ...o,
+      login,
+      password,
+      email: str(o.email) ?? str(o.mail) ?? str(o.email_address) ?? "",
+      email_password: str(o.email_password) ?? str(o.emailPassword) ?? str(o.mail_password) ?? str(o.email_pass) ?? "",
+    };
+  }
+  for (const v of Object.values(o)) {
+    const c = findCreds(v, depth + 1);
+    if (c) return c;
+  }
+  return null;
+}
+
+/** Accepts {id, credentials}, {ok, order:{…}}, {data:{…}}, {order_id, account:{…}} … */
+export function normalizeOrder(raw: unknown): QvspOrder {
+  const r = isObj(raw) ? raw : {};
+  const inner = [r.order, r.data, isObj(r.data) ? (r.data as Record<string, unknown>).order : null, r.result].find(isObj) as
+    | Record<string, unknown>
+    | undefined;
+  const o = inner ?? r;
+  const id = str(o.id) ?? str(o.order_id) ?? str(r.order_id) ?? str(r.id) ?? "";
+  return {
+    ...o,
+    id,
+    status: str(o.status) ?? str(r.status) ?? "",
+    credentials: findCreds(raw) ?? undefined,
+    _shape: describeShape(raw),
+  } as QvspOrder;
+}
+
+/** Key structure with every value redacted — safe to log. */
+export function describeShape(v: unknown, depth = 0): string {
+  if (Array.isArray(v)) return `[${v.length ? describeShape(v[0], depth + 1) : ""}]`;
+  if (!isObj(v)) return typeof v;
+  if (depth > 3) return "{…}";
+  return `{${Object.entries(v).map(([k, x]) => `${k}:${describeShape(x, depth + 1)}`).join(", ")}}`;
 }
 
 /** Fetch one qvsp order (credentials included once completed). */

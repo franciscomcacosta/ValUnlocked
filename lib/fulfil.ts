@@ -104,10 +104,19 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
     return false;
   }
 
+  // Save qvsp's order id right away so the purchase is never "lost" even if
+  // the credentials aren't readable yet (retries replay the same order).
+  if (qvspOrder.id) await db.from("orders").update({ qvsp_order_id: qvspOrder.id }).eq("id", orderId);
+
   const creds = qvspOrder.credentials;
   if (!creds?.login || !creds?.password) {
-    console.error(`[fulfil] qvsp order ${qvspOrder.id} returned no credentials`);
+    const shape = String((qvspOrder as Record<string, unknown>)._shape ?? "?");
+    console.error(`[fulfil] qvsp order ${qvspOrder.id || "?"} returned no credentials · shape ${shape}`);
     await db.from("orders").update({ status: "paid" }).eq("id", orderId);
+    await logToStaff(
+      `⚠️ Order ${orderId}: qvsp accepted the purchase (qvsp order ${qvspOrder.id || "unknown"}) but sent no readable login yet. ` +
+        `Will retry. Response shape (values hidden): \`${shape.slice(0, 600)}\``
+    );
     return false;
   }
 

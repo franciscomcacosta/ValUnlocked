@@ -1988,72 +1988,23 @@ function orderPillClass(status: string): string {
 function XrayTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void }) {
   if (!isUltra) {
     return (
-      <div
-        style={{
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+      <LockedOverlay
+        title="X-RAY is Ultra-only"
+        perks={[
+          "See every skin on every account before you buy",
+          "Pick the exact account you want",
+          "Auto-buy accounts matching your filters",
+          "Priority replacement handling",
+        ]}
+        onSub={onSub}
       >
-        <div
-          className="cut"
-          style={{
-            width: "460px",
-            maxWidth: "100%",
-            padding: "28px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "14px",
-            background: "var(--vu-navy)",
-            color: "var(--vu-ivory)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span
-              className="cs"
-              style={{
-                width: "44px",
-                height: "44px",
-                background: "#ffd400",
-                color: "var(--vu-navy)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="4" y="11" width="16" height="10" rx="1" />
-                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-              </svg>
-            </span>
-            <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>
-              X-RAY is Ultra-only
-            </span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {[
-              "See every skin on every account before you buy",
-              "Pick the exact account you want",
-              "Auto-buy accounts matching your filters",
-              "Priority replacement handling",
-            ].map((p) => (
-              <span key={p} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffd400" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-                {p}
-              </span>
-            ))}
-          </div>
-          <button className="btn btn-gold cut btn-lg" onClick={onSub}>
-            Upgrade to Ultra — €59.99/mo
-          </button>
-        </div>
-      </div>
+        {/* Live X-RAY UI running behind the blur, so non-Ultra users see
+            exactly what they're unlocking. It can't be interacted with
+            (pointer-events: none on the wrapper). */}
+        <XrayInspector />
+      </LockedOverlay>
     );
   }
-
   return <XrayInspector />;
 }
 
@@ -2435,24 +2386,113 @@ type AutobuyRule = {
 function AutobuyTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void }) {
   if (!isUltra) {
     return (
-      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div className="cut" style={{ width: "460px", maxWidth: "100%", padding: "28px", display: "flex", flexDirection: "column", gap: "14px", background: "var(--vu-navy)", color: "var(--vu-ivory)" }}>
+      <LockedOverlay
+        title="Auto-Buy is Ultra-only"
+        perks={[
+          "Buy matching drops the instant they land",
+          "Set budget, rank floor, must-include skins",
+          "Capped daily so you don't run through your credit",
+          "Shares drops fairly across all Ultra subscribers (round-robin)",
+        ]}
+        onSub={onSub}
+      >
+        <AutobuyManager />
+      </LockedOverlay>
+    );
+  }
+  return <AutobuyManager />;
+}
+
+// ---- Shared Ultra-lock overlay ---------------------------------------
+// Renders the gated UI live behind a strong blur + dark wash so non-Ultra
+// users see a preview of what they'd unlock. The lock card floats
+// centered above with the perks + upgrade CTA. Pointer events on the
+// background are disabled so nothing under the blur can be clicked or
+// focused.
+
+function LockedOverlay({
+  title, perks, onSub, children,
+}: {
+  title: string;
+  perks: string[];
+  onSub: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ position: "relative", height: "100%", overflow: "hidden" }}>
+      {/* The live background UI, blurred + non-interactive. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          filter: "blur(6px) saturate(0.9)",
+          pointerEvents: "none",
+          userSelect: "none",
+        }}
+      >
+        {children}
+      </div>
+      {/* Dark gold-tinted wash for contrast behind the card. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(circle at 50% 55%, rgba(255,212,0,0.08) 0%, transparent 55%), rgba(15,25,35,0.55)",
+          pointerEvents: "none",
+        }}
+      />
+      {/* Lock card */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px",
+        }}
+      >
+        <div
+          className="cut rise"
+          style={{
+            width: "460px",
+            maxWidth: "100%",
+            padding: "28px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+            background: "var(--vu-navy)",
+            color: "var(--vu-ivory)",
+            boxShadow: "0 30px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,212,0,0.15)",
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span className="cs" style={{ width: "44px", height: "44px", background: "#ffd400", color: "var(--vu-navy)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            <span
+              className="cs"
+              style={{
+                width: "44px",
+                height: "44px",
+                background: "#ffd400",
+                color: "var(--vu-navy)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="4" y="11" width="16" height="10" rx="1" />
                 <path d="M8 11V7a4 4 0 0 1 8 0v4" />
               </svg>
             </span>
-            <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>Auto-Buy is Ultra-only</span>
+            <span className="h" style={{ fontSize: "30px", color: "#ffd400" }}>
+              {title}
+            </span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {[
-              "Buy matching drops the instant they land",
-              "Set budget, rank floor, must-include skins",
-              "Capped daily so you don't run through your credit",
-              "Shares drops fairly across all Ultra subscribers (round-robin)",
-            ].map((p) => (
+            {perks.map((p) => (
               <span key={p} style={{ display: "flex", gap: "10px", alignItems: "center" }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffd400" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M20 6 9 17l-5-5" />
@@ -2461,12 +2501,13 @@ function AutobuyTab({ isUltra, onSub }: { isUltra: boolean; onSub: () => void })
               </span>
             ))}
           </div>
-          <button className="btn btn-gold cut btn-lg" onClick={onSub}>Upgrade to Ultra — €59.99/mo</button>
+          <button className="btn btn-gold cut btn-lg" onClick={onSub}>
+            Upgrade to Ultra — €59.99/mo
+          </button>
         </div>
       </div>
-    );
-  }
-  return <AutobuyManager />;
+    </div>
+  );
 }
 
 function AutobuyManager() {

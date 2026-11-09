@@ -150,20 +150,16 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
       break;
     }
     if (verdict.reason === "login_invalid" || verdict.reason === "login_timeout") {
-      // Account is broken. File it for the qvsp replacement claim,
-      // hide it, release our hold, swap for an equivalent, loop again.
-      await db.from("qvsp_broken_accounts").insert({
-        order_id: orderId,
-        qvsp_id: row.qvsp_id,
-        qvsp_order_id: qvspOrder.id ?? null,
-        reason: verdict.reason,
-        proof_video_url: verdict.video_url ?? null,
-      }).then(() => undefined, (e) => console.warn("[fulfil] couldn't log broken account (run migration)", e?.message));
-      await logToStaff(
-        `🚫 Order ${orderId}: creds for qvsp ${row.qvsp_id} failed verification (${verdict.reason}). ` +
-          (verdict.video_url ? `Proof: ${verdict.video_url}\n` : "") +
-          `Swapping for an equivalent. File a qvsp replacement ticket with the video above.`
-      );
+      // Account's creds don't work. File an AUTOMATED replacement claim
+      // against this exact qvsp order so we recover our money, then swap
+      // for an equivalent and buy again for the end user.
+      await autoFileReplacementClaim({
+        orderId,
+        qvspOrderId: qvspOrder.id ?? null,
+        login: peekCreds.login,
+        reason: verdict.reason,   // maps to qvsp's "login" category
+        videoPath: verdict.video_path ?? null,
+      }).catch((e) => console.error("[fulfil] auto-file replacement failed", e));
       await db.from("qvsp_stock").update({ removed_at: new Date().toISOString() }).eq("qvsp_id", row.qvsp_id);
       await db.rpc("release_qvsp_stock", { p_order_id: orderId });
       const alt = await reserveEquivalent(orderId, row);
@@ -283,6 +279,80 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   return true;
 }
 
+/** File a replacement claim against qvsp automatically after our
+ *  pre-delivery verifier caught broken creds. Uses the same path as a
+ *  buyer-reported claim: insert a row, call forwardClaimToQvsp, which
+ *  signs the video + uploads to qvsp's /replace/proof + opens the ticket.
+ *  Idempotent — a duplicate insert against an open claim is ignored. */
+async function autoFileReplacementClaim(opts: {
+  orderId: string;
+  qvspOrderId: string | null;
+  login: string;
+  reason: "login_invalid" | "login_timeout";
+  videoPath: string | null;
+}): Promise<void> {
+  const { forwardClaimToQvsp } = await import("./claims");
+
+  // Grab the buyer's user_id so the row is well-formed. We still mark
+  // this as an auto-filed claim via outcome_note for staff auditing.
+  const { data: order } = await db
+    .from("orders")
+    .select("user_id")
+    .eq("id", opts.orderId)
+    .single();
+  if (!order) return;
+
+  // qvsp's category 'login' covers both login_invalid and login_timeout
+  // (we never attempted an MFA step, so it's never login_mfa).
+  const { data: claim, error } = await db
+    .from("replacement_claims")
+    .insert({
+      order_id: opts.orderId,
+      user_id: order.user_id,
+      reason: "login",
+      details: `AUTO: pre-delivery verifier said ${opts.reason} for login \`${opts.login}\``,
+      video_path: opts.videoPath,
+      // Our auto-claim is to recover OUR cost, not to refund the buyer —
+      // they haven't paid for this broken account, they're getting a
+      // swap. Refund amount is 0 since nothing was delivered to them.
+      refund_cents: 0,
+      bonus_cents: 0,
+      outcome_note: "auto_filed_pre_delivery",
+    })
+    .select("id")
+    .single();
+  if (error || !claim) {
+    // If the unique index trips because a buyer-filed claim already
+    // exists for this order, skip. That's fine — the buyer's claim
+    // carries the real refund and takes precedence.
+    if (/duplicate|unique/i.test(error?.message ?? "")) {
+      await logToStaff(
+        `🤖 Order ${opts.orderId}: auto pre-delivery claim skipped (buyer already filed one). Our swap is still happening.`
+      );
+      return;
+    }
+    await logToStaff(
+      `🤖 Order ${opts.orderId}: auto pre-delivery claim insert failed (${error?.message ?? "?"}). ` +
+        `We still swapped the account for the buyer — but the qvsp refund wasn't filed. Follow up.`
+    );
+    return;
+  }
+
+  await logToStaff(
+    `🤖 Order ${opts.orderId}: pre-delivery verifier caught \`${opts.reason}\` on login \`${opts.login}\`. ` +
+      `Filed replacement claim \`${claim.id.slice(0, 8)}\` with qvsp automatically. ` +
+      (opts.qvspOrderId ? `qvsp order: \`${opts.qvspOrderId}\`.` : "")
+  );
+
+  // Fire-and-forget the actual qvsp API call. forwardClaimToQvsp
+  // handles its own error logging into forward_error + staff.
+  try {
+    await forwardClaimToQvsp(claim.id);
+  } catch (e) {
+    console.error("[fulfil] forwardClaimToQvsp threw", e);
+  }
+}
+
 /** Call the Fly worker's /verify endpoint synchronously and wait up to 90s
  *  for a verdict. Returns the verdict, or a synthetic worker_error if the
  *  dispatch itself fails. */
@@ -292,7 +362,7 @@ async function verifyCredsWithWorker(
   password: string
 ): Promise<
   | { ok: true; email: string }
-  | { ok: false; reason: string; video_url?: string; detail?: string }
+  | { ok: false; reason: string; video_path?: string; detail?: string }
 > {
   const workerUrl = process.env.EXTRACTOR_WORKER_URL;
   const workerSecret = process.env.EXTRACTOR_WORKER_SECRET;

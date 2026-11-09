@@ -37,7 +37,12 @@ const CALLBACK_SECRET = process.env.CALLBACK_SECRET;
 const MAIN_APP_URL = process.env.MAIN_APP_URL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const QVSP_PROOFS_BUCKET = process.env.QVSP_PROOFS_BUCKET ?? "qvsp-proofs";
+// We write failure videos into the EXISTING claim-videos bucket that
+// the main app uses for buyer screen recordings. Paths follow the
+// same <order_id>/<timestamp>.<ext> convention so forwardClaimToQvsp()
+// in the main app can read/upload them to qvsp without special-casing
+// worker uploads.
+const PROOFS_BUCKET = process.env.QVSP_PROOFS_BUCKET ?? "claim-videos";
 
 // Playwright caps outcome-wait races at 25s each, plus up to 25s for
 // nav + a few seconds of overhead. 80s keeps us comfortably under the
@@ -106,7 +111,10 @@ interface VerifyFail {
   ok: false;
   reason: "login_invalid" | "captcha_present" | "login_timeout" | "email_not_found" | "worker_error" | "extraction_timeout";
   detail?: string;
-  video_url?: string;  // only on login_invalid, when we have real proof
+  /** For login_invalid / login_timeout only — the path inside the
+   *  claim-videos bucket where we stored the proof. The main app
+   *  signs it + ships it to qvsp through the existing claim flow. */
+  video_path?: string;
 }
 type VerifyResult = VerifyOk | VerifyFail;
 
@@ -182,7 +190,7 @@ async function verify(order_id: string, login: string, password: string): Promis
       // IP). Record + upload the video so qvsp can see the attempt.
       const videoPath = await closeAndGetVideo(page, ctx);
       page = null; ctx = null;
-      const url = videoPath ? await uploadProofVideo(order_id, videoPath).catch((e) => {
+      const storedPath = videoPath ? await uploadProofVideo(order_id, videoPath).catch((e) => {
         console.error("[worker] proof upload failed:", e);
         return undefined;
       }) : undefined;
@@ -190,7 +198,7 @@ async function verify(order_id: string, login: string, password: string): Promis
       return {
         ok: false,
         reason: outcome === "timeout" ? "login_timeout" : "login_invalid",
-        video_url: url,
+        video_path: storedPath,
       };
     }
 
@@ -229,12 +237,15 @@ async function closeAndGetVideo(page: Page, ctx: BrowserContext | null): Promise
   try { return await video.path(); } catch { return null; }
 }
 
-/** Upload a .webm to Supabase Storage and return a 30-day signed URL. */
+/** Upload a .webm to Supabase Storage and return the bucket-relative path.
+ *  Path matches the main app's claim-videos convention (<order_id>/<ts>.<ext>)
+ *  so forwardClaimToQvsp() can read + sign + ship it without any special
+ *  worker-aware code. */
 async function uploadProofVideo(order_id: string, localPath: string): Promise<string | undefined> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return undefined;
   const bytes = await readFile(localPath);
-  const objectPath = `${new Date().toISOString().slice(0, 10)}/${order_id}.webm`;
-  const uploadUrl = `${SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/${QVSP_PROOFS_BUCKET}/${encodeURIComponent(objectPath)}`;
+  const objectPath = `${order_id}/${Date.now()}.webm`;
+  const uploadUrl = `${SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/${PROOFS_BUCKET}/${objectPath}`;
 
   const putRes = await fetch(uploadUrl, {
     method: "POST",
@@ -249,28 +260,7 @@ async function uploadProofVideo(order_id: string, localPath: string): Promise<st
     console.error(`[worker] supabase upload ${putRes.status}:`, await putRes.text().catch(() => ""));
     return undefined;
   }
-
-  // 30-day signed download URL.
-  const signRes = await fetch(
-    `${SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/sign/${QVSP_PROOFS_BUCKET}/${encodeURIComponent(objectPath)}`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ expiresIn: 60 * 60 * 24 * 30 }),
-    }
-  );
-  if (!signRes.ok) {
-    console.error(`[worker] supabase sign ${signRes.status}:`, await signRes.text().catch(() => ""));
-    return undefined;
-  }
-  const signed = (await signRes.json()) as { signedURL?: string; signedUrl?: string };
-  const token = signed.signedURL ?? signed.signedUrl ?? "";
-  if (!token) return undefined;
-  // Supabase returns "/object/sign/..." path; prefix with the base URL.
-  return `${SUPABASE_URL.replace(/\/$/, "")}/storage/v1${token.startsWith("/") ? token : `/${token}`}`;
+  return objectPath;
 }
 
 async function sendCallback(order_id: string, payload: Record<string, unknown>): Promise<void> {

@@ -11,7 +11,10 @@ export async function GET(req: Request) {
   const auth = requireAdmin(req);
   if (auth instanceof Response) return auth;
   const res = await qvspRaw("/webhook");
-  return Response.json(res, { headers: { "cache-control": "no-store" } });
+  // Never echo the webhook token, even to admins.
+  const token = process.env.QVSP_WEBHOOK_TOKEN;
+  const safe = token ? JSON.parse(JSON.stringify(res).split(token).join("•••")) : res;
+  return Response.json(safe, { headers: { "cache-control": "no-store" } });
 }
 
 export async function POST(req: Request) {

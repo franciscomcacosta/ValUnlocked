@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 // Typed client for the qvsp.net partner API.
 // Docs are not public; this is reverse-engineered from live probes.
 // Base URL and auth header come from env so we can swap sandbox/prod.
@@ -153,10 +154,16 @@ export async function getWebhookConfig(): Promise<QvspWebhookConfig> {
  * Called only from fulfilOrder() (post-payment) or the autobuy worker.
  * Never from a user-facing route without an order gate.
  */
-export async function buyAccount(opts: { kind: QvspKind; id: string }): Promise<QvspOrder> {
+export async function buyAccount(opts: { kind: QvspKind; id: string; orderRef?: string }): Promise<QvspOrder> {
+  // qvsp requires an idempotency_key (8–64 chars). Derived from OUR order +
+  // the listing, so a retry of the same purchase can never charge twice,
+  // while swapping to a different listing gets a fresh key.
+  const idempotencyKey =
+    "vu_" + createHash("sha256").update(`${opts.orderRef ?? "manual"}:${opts.kind}:${opts.id}`).digest("hex").slice(0, 40);
   return call<QvspOrder>("/orders", {
     method: "POST",
-    body: JSON.stringify({ kind: opts.kind, id: opts.id }),
+    headers: { "idempotency-key": idempotencyKey },
+    body: JSON.stringify({ kind: opts.kind, id: opts.id, idempotency_key: idempotencyKey }),
   });
 }
 

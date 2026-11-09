@@ -71,7 +71,7 @@ export async function fulfilOrder(orderId: string): Promise<boolean> {
   let row = qvspRow;
   for (let attempt = 0; attempt < 4 && !qvspOrder; attempt++) {
     try {
-      qvspOrder = await buyAccount({ kind: row.kind as QvspKind, id: row.qvsp_id });
+      qvspOrder = await buyAccount({ kind: row.kind as QvspKind, id: row.qvsp_id, orderRef: orderId });
     } catch (e) {
       if (!isGoneError(e)) {
         console.error(`[fulfil] qvsp buy failed for order ${orderId}`, e);

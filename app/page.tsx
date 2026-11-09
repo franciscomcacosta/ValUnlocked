@@ -3457,6 +3457,27 @@ function AdminTab() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  const [stuck, setStuck] = useState<Array<{ id: string; paid_at: string; products: { name: string } | null }> | null>(null);
+  const [retryMsg, setRetryMsg] = useState("");
+  const loadStuck = useCallback(() => {
+    fetch("/api/admin/retry-stuck").then((r) => r.json()).then((d) => setStuck(d.stuck ?? [])).catch(() => setStuck([]));
+  }, []);
+  useEffect(() => { loadStuck(); }, [loadStuck]);
+  async function retryAll() {
+    setBusy(true); setRetryMsg("");
+    try {
+      const d = await fetch("/api/admin/retry-stuck", { method: "POST" }).then((r) => r.json());
+      const res = (d.results ?? []) as Array<{ delivered: boolean; status: string }>;
+      const ok = res.filter((x) => x.delivered).length;
+      setRetryMsg(res.length ? `${ok}/${res.length} delivered.${ok < res.length ? " The rest are still stuck — check staff-log for why." : ""}` : "Nothing to retry.");
+      loadStuck();
+    } catch (e) {
+      setRetryMsg(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function connect() {
     setBusy(true); setMsg("");
     try {
@@ -3492,6 +3513,29 @@ function AdminTab() {
           {busy ? "Connecting…" : hook?.configured ? "Reconnect + send test" : "Connect webhook"}
         </button>
         {msg && <span style={{ fontSize: "13px" }}>{msg}</span>}
+      </div>
+      <div className="cs" style={{ maxWidth: "560px", padding: "14px 16px", background: "var(--vu-surface-alt)", display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span className="h" style={{ fontSize: "20px", flex: 1 }}>Stuck deliveries</span>
+          <span className={`pill ${stuck?.length ? "a" : "g"}`}>{stuck === null ? "Checking…" : stuck.length ? `${stuck.length} waiting` : "None"}</span>
+        </div>
+        <span className="mut" style={{ fontSize: "13px" }}>
+          Paid (or free-gift) orders where buying the account from qvsp failed. Retried automatically for 30 min;
+          use this for anything older. A retry can never buy the same account twice.
+        </span>
+        {!!stuck?.length && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px", fontSize: "12px" }}>
+            {stuck.slice(0, 8).map((o) => (
+              <a key={o.id} className="mono" href={`/orders/${o.id}`} style={{ color: "inherit" }}>
+                VU-{o.id.slice(0, 8).toUpperCase()} · {o.products?.name ?? "order"} · paid {new Date(o.paid_at).toLocaleString()}
+              </a>
+            ))}
+          </div>
+        )}
+        <button className="btn btn-dark cs" style={{ alignSelf: "flex-start" }} onClick={retryAll} disabled={busy || !stuck?.length}>
+          {busy ? "Retrying…" : "Retry all now"}
+        </button>
+        {retryMsg && <span style={{ fontSize: "13px" }}>{retryMsg}</span>}
       </div>
     </section>
   );

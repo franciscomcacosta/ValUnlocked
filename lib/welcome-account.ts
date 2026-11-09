@@ -48,7 +48,17 @@ async function giftProductId(kind: GiftKind): Promise<string> {
   if (existing?.id) return existing.id as string;
   const { data, error } = await db
     .from("products")
-    .insert({ slug, name: GIFTS[kind].name, region: "—", price_cents: 0, currency: "eur", active: false, description: GIFTS[kind].description })
+    // products.price_cents must be > 0 (DB check) — this is only the hidden
+    // list price; the gift order itself charges €0.
+    .insert({
+      slug,
+      name: GIFTS[kind].name,
+      region: "—",
+      price_cents: SKIN_BRACKETS.find((x) => x.name === GIFTS[kind].bracket)!.publicPriceCents,
+      currency: "eur",
+      active: false,
+      description: GIFTS[kind].description,
+    })
     .select("id")
     .single();
   if (error || !data) throw new Error(`gift product create failed: ${error?.message}`);

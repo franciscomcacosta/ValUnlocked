@@ -305,7 +305,7 @@ async function resolveBracketProductId(bracket: BracketName): Promise<string> {
     .from("products")
     .insert({
       slug,
-      name: `${label} skins`,                // ← user-facing: "26-50 skins"
+      name: label,                           // ← user-facing: "26–50 skins" (label already says "skins")
       region: "—",
       price_cents: 100,
       currency: "eur",

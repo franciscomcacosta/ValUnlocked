@@ -80,6 +80,8 @@ export async function createCheckout(userId: string, productSlug: string, useCre
 export async function cancelOrder(orderId: string, userId: string, creditUsed: number, status: "cancelled" | "expired" | "failed") {
   await db.from("orders").update({ status }).eq("id", orderId);
   await db.rpc("release_inventory", { p_order_id: orderId });
+  // qvsp-reserved orders hold a qvsp_stock row instead — put it back on sale.
+  await db.rpc("release_qvsp_stock", { p_order_id: orderId });
   if (creditUsed > 0) {
     await db.rpc("add_credit", { p_user_id: userId, p_cents: creditUsed, p_reason: `order_${status}`, p_order_id: orderId });
   }

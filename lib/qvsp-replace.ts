@@ -122,12 +122,8 @@ export async function uploadProof(opts: {
     form.append(field, opts.file, opts.filename);
     return qvspRaw("/replace/proof", { form });
   };
-  let res = await send("video");
-  // If qvsp names a different file field, retry once with "file".
-  if (!res.ok && res.status >= 400 && res.status < 500 && /\b(file|video)\b/i.test(JSON.stringify(res.body ?? ""))) {
-    const again = await send("file");
-    if (again.ok) res = again;
-  }
+  // qvsp: "No file received (multipart field 'file')".
+  const res = await send("file");
   const proofToken = res.ok
     ? pick(res.body, ["proof_token", "token", "data.proof_token", "proof.proof_token", "proof.token", "data.token"])
     : null;

@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LockLogo } from "@/components/lock-logo";
 import { ClaimOutcomeModal } from "@/components/claims";
+import { TOPUP_TIERS, TOPUP_BONUS_PCT } from "@/lib/pricing";
 
 // ----- Types ----------------------------------------------------
 
@@ -3222,8 +3223,10 @@ function TopupModal({
   onCredited: () => void;
   onClose: () => void;
 }) {
-  const [tiers, setTiers] = useState<TopupTierRow[] | null>(null);
-  const [bonusPct, setBonusPct] = useState(0.05);
+  // Start from the built-in amounts so the picker is never empty; the
+  // server list (same source) only refreshes them.
+  const [tiers, setTiers] = useState<TopupTierRow[] | null>(TOPUP_TIERS);
+  const [bonusPct, setBonusPct] = useState(TOPUP_BONUS_PCT);
   const [pick, setPick] = useState<string>("t25");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -3232,8 +3235,8 @@ function TopupModal({
   useEffect(() => {
     fetch("/api/topup")
       .then((r) => r.json())
-      .then((d) => { if (d.ok) { setTiers(d.tiers); setBonusPct(d.bonusPct); } else setTiers([]); })
-      .catch(() => setTiers([]));
+      .then((d) => { if (d.ok && Array.isArray(d.tiers) && d.tiers.length) { setTiers(d.tiers); setBonusPct(d.bonusPct); } })
+      .catch(() => { /* keep built-in amounts */ });
   }, []);
 
   // Returning from NowPayments: poll until the IPN credits the wallet.

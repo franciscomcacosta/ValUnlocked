@@ -1,6 +1,6 @@
 # Playwright's official image comes with Chromium + all system deps baked in.
 # Pin the version — Playwright's node package must match the image version.
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy
+FROM mcr.microsoft.com/playwright:v1.65.0-jammy
 
 WORKDIR /app
 

@@ -9,6 +9,7 @@
 // invoice URL so inboxes don't fill up with new links.
 import { db } from "./supabase";
 import { createInvoice } from "./nowpayments";
+import { welcomeStatus } from "./welcome-account";
 import { notifyDiscordUser, setTierRole, clearTierRoles, logToStaff } from "./discord";
 import {
   SUB_PRICE_CENTS,
@@ -268,6 +269,17 @@ export async function applyPaidSubInvoice(subInvoiceId: string): Promise<boolean
         (creditCents > 0 ? `**${formatEur(creditCents)}** monthly store credit added — applied automatically on your next purchase.\n` : "") +
         `New perks unlocked in the Discord.`
     ).catch((e) => console.error("[subs] DM failed", e));
+
+    if (inv.tier === "standard" && inv.purpose === "initial") {
+      const ws = await welcomeStatus(sub.user_id).catch(() => null);
+      if (ws?.state === "available") {
+        await notifyDiscordUser(
+          user.discord_id,
+          `🎁 **Your first Standard month comes with a FREE 26–50 skins account.**\n` +
+            `Pick your region and claim it here: ${process.env.PUBLIC_BASE_URL}/?claim=welcome`
+        ).catch(() => {});
+      }
+    }
   }
 
   await logToStaff(

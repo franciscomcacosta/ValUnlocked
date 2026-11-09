@@ -19,6 +19,7 @@ import {
   type FeaturedSkin,
 } from "@/lib/pricing";
 import { createInvoice } from "@/lib/nowpayments";
+import { fulfilOrder } from "@/lib/fulfil";
 
 export const runtime = "nodejs";
 
@@ -247,8 +248,10 @@ async function reserveAndInvoice(args: ReserveArgs): Promise<Response> {
   }
 
   if (charge === 0) {
-    await db.from("orders").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", order.id);
-    return Response.json({ ok: true, orderId: order.id, invoiceUrl: null, deliveredByCredit: true });
+    // Fully covered by credit: deliver now (fulfilOrder claims the order and
+    // marks it paid itself — setting "paid" first would make it skip).
+    const delivered = await fulfilOrder(order.id);
+    return Response.json({ ok: true, orderId: order.id, invoiceUrl: null, deliveredByCredit: true, delivered });
   }
 
   try {

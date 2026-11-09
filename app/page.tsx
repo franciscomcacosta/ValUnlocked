@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LockLogo } from "@/components/lock-logo";
+import { WelcomeGift } from "@/components/welcome-gift";
 import { ClaimOutcomeModal } from "@/components/claims";
 import { useStockFeed, useStockVersion, DropToasts, type StockDrop } from "@/components/live-stock";
 import { TOPUP_TIERS, TOPUP_BONUS_PCT } from "@/lib/pricing";
@@ -190,6 +191,7 @@ export default function Page() {
       </main>
 
       <ClaimOutcomeModal onCredited={reloadMe} />
+      <WelcomeGift active />
       <DropToasts earlyAccess={me.sub?.tier === "premium" || me.sub?.tier === "ultra"} />
 
       {topup.open && (
@@ -1618,6 +1620,7 @@ const TIER_CARDS: TierSpec[] = [
     color: TIER_COLOR.standard,
     tagline: "The toolkit — cheaper accounts + the method.",
     perks: [
+      "🎁 FREE 26–50 skins account with your first month",
       "10% off every account",
       "Discord members channel",
       "Written method + guides",

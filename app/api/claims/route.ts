@@ -3,7 +3,7 @@
 //   GET  ?unseen=1            → resolved claims the caller hasn't been shown yet
 //   POST { action: "upload-url", orderId, filename, size, type }
 //        → signed URL to PUT the screen recording straight to storage
-//   POST { action: "submit", orderId, reason, details?, videoPath }
+//   POST { action: "submit", orderId, reason, videoPath }
 //        → creates the claim and forwards it to qvsp
 //   POST { action: "seen", ids }  → marks outcome notices as shown
 export const dynamic = "force-dynamic";
@@ -110,12 +110,10 @@ export async function POST(req: Request) {
     }
     const reason = String(body?.reason ?? "");
     if (!(reason in CLAIM_REASONS)) return Response.json({ error: "invalid_reason" }, { status: 400 });
-    if (reason === "other" && String(body?.details ?? "").trim().length < 4) {
-      return Response.json({ error: "details_required" }, { status: 400 });
-    }
     const videoPath = String(body?.videoPath ?? "");
     if (!videoPath.startsWith(`${order.id}/`)) return Response.json({ error: "video_required" }, { status: 400 });
-    const details = String(body?.details ?? "").trim().slice(0, 1000) || null;
+    // Only qvsp's six problem types — no free-text details from buyers.
+    const details = null;
 
     // What the client actually spent: credit + crypto (after any sub
     // discount). price_cents is the pre-discount public price.

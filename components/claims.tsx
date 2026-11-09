@@ -15,7 +15,7 @@ export const CLAIM_REASON_OPTIONS: Array<[string, string, string]> = [
   ["banned", "🚫", "Account is banned / suspended"],
   ["ingame_ban", "⛔", "In-game ban / restriction (logs in, but can't play Comp)"],
   ["mfa", "📱", "Logs in fine: Ranked/Comp needs verification (phone / MFA)"],
-  ["other", "✍️", "Other (type your issue)"],
+  ["other", "❓", "Other"],
 ];
 const LEGACY_LABELS: Record<string, string> = { count: "Wrong skin count", locked: "Locked or banned" };
 export const claimReasonLabel = (k: string) => CLAIM_REASON_OPTIONS.find((r) => r[0] === k)?.[2] ?? LEGACY_LABELS[k] ?? k;
@@ -70,7 +70,6 @@ export function ReportProblemModal({
 }) {
   const [reason, setReason] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [details, setDetails] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [err, setErr] = useState("");
@@ -100,7 +99,6 @@ export function ReportProblemModal({
 
   async function submit() {
     if (!reason || !file) return;
-    if (reason === "other" && details.trim().length < 4) { setErr("Tell us what's wrong in the box below."); return; }
     setBusy(true); setErr(""); setProgress(0);
     try {
       const u = await fetch("/api/claims", {
@@ -117,13 +115,12 @@ export function ReportProblemModal({
       const s = await fetch("/api/claims", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "submit", orderId, reason, details, videoPath: u.path }),
+        body: JSON.stringify({ action: "submit", orderId, reason, videoPath: u.path }),
       }).then((r) => r.json());
       if (!s.ok) throw new Error(
         s.error === "already_reported" ? "You've already reported this order — it's under review."
         : s.error === "window_closed" ? "The 10-minute window has closed."
         : s.error === "claims_unavailable" ? "Reporting isn't switched on yet. Open a ticket in our Discord."
-        : s.error === "details_required" ? "Tell us what's wrong in the box below."
         : "Couldn't send the report. Try again."
       );
       setTicket(s.ticket);
@@ -228,10 +225,6 @@ export function ReportProblemModal({
               )}
             </div>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <span className="lbl" style={{ color: "#0f1923" }}>Details <span className="mut" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400, fontSize: "12px" }}>{reason === "other" ? "(required — what's wrong?)" : "(optional)"}</span></span>
-              <textarea className="inp" value={details} onChange={(e) => setDetails(e.target.value)} maxLength={1000} style={{ height: "52px", padding: "10px 12px", resize: "none" }} placeholder="Error message, time, what you tried…" />
-            </label>
 
             <span className="mut" style={{ fontSize: "12px" }}>
               We review your video with the supplier. If they send a replacement, you get that account.{" "}

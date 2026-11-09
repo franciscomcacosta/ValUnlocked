@@ -40,7 +40,8 @@ export const data = new SlashCommandBuilder()
   .setName("trial")
   .setDescription("Give everyone with a role a free Standard trial + free account (admin only)")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-  .addRoleOption((o) => o.setName("role").setDescription("Who gets it, e.g. @Verified").setRequired(true))
+  .addRoleOption((o) => o.setName("role").setDescription("Everyone with this role, e.g. @Verified"))
+  .addUserOption((o) => o.setName("user").setDescription("…or just one person"))
   .addIntegerOption((o) => o.setName("days").setDescription("Trial length (default 7)").setMinValue(1).setMaxValue(30));
 
 // ── Who qualifies ─────────────────────────────────────────────────────────
@@ -120,9 +121,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.reply({ content: "A trial run is already in progress.", ephemeral: true });
     return;
   }
-  const role = interaction.options.getRole("role", true);
+  const role = interaction.options.getRole("role");
+  const one = interaction.options.getUser("user");
   const days = interaction.options.getInteger("days") ?? 7;
+  if (!role && !one) {
+    await interaction.reply({ content: "Pick a **role** (everyone with it) or a **user** (one person).", ephemeral: true });
+    return;
+  }
   await interaction.deferReply({ ephemeral: true });
+  if (one) {
+    await trialForOne(interaction, one, days);
+    return;
+  }
+  if (!role) return;
 
   let plan: Plan;
   try {
@@ -159,6 +170,76 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     new ButtonBuilder().setCustomId("trial:cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
   );
   await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+// ── Giving one trial ─────────────────────────────────────────────────────
+function claimRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setLabel("Claim my free account").setEmoji("🎮").setStyle(ButtonStyle.Link).setURL(`${BASE}/?claim=trial`)
+  );
+}
+
+async function giveTrial(client: Client, guildId: string, discordId: string, username: string, days: number) {
+  const userId = await ensureUser(discordId, username);
+  const { end, subscriptionId } = await applyPlan(userId, "standard", days, { trial: true });
+  // €0 marker: "had a trial" + unlocks the free 1–25 account.
+  const mark = await db.from("sub_invoices").insert({
+    subscription_id: subscriptionId,
+    user_id: userId,
+    tier: "standard",
+    amount_cents: 0,
+    currency: "eur",
+    purpose: "trial",
+    paid_at: new Date().toISOString(),
+  });
+  if (mark.error) throw mark.error;
+  const stdRole = process.env.DISCORD_ROLE_STANDARD;
+  const roleOk = stdRole ? await client.rest.put(Routes.guildMemberRole(guildId, discordId, stdRole)).then(() => true, () => false) : false;
+  const dmOk = await client.users
+    .send(discordId, { embeds: [dmEmbed(days, Math.floor(end.getTime() / 1000))], components: [claimRow()] })
+    .then(() => true, () => false);
+  return { end, roleOk, dmOk };
+}
+
+/** /trial user:@someone — one person, no preview step. If they already have
+ *  an active trial, the DM is simply re-sent (e.g. to fix an old link). */
+async function trialForOne(interaction: ChatInputCommandInteraction, target: { id: string; username: string; bot: boolean }, days: number) {
+  if (target.bot) {
+    await interaction.editReply("Bots can't get trials.");
+    return;
+  }
+  const { data: u } = await db.from("users").select("id").eq("discord_id", target.id).maybeSingle();
+  if (u?.id) {
+    const [{ data: sub }, { data: trial }] = await Promise.all([
+      db.from("subscriptions").select("tier, period_end").eq("user_id", u.id).in("status", ["active", "grace"]).maybeSingle(),
+      db.from("sub_invoices").select("id").eq("user_id", u.id).eq("purpose", "trial").limit(1),
+    ]);
+    if (trial?.length) {
+      if (sub?.tier === "standard") {
+        const endTs = Math.floor(new Date(sub.period_end as string).getTime() / 1000);
+        const left = Math.max(1, Math.ceil((endTs * 1000 - Date.now()) / 86_400_000));
+        const dmOk = await interaction.client.users
+          .send(target.id, { embeds: [dmEmbed(left, endTs)], components: [claimRow()] })
+          .then(() => true, () => false);
+        await interaction.editReply(`<@${target.id}> already has a trial (ends <t:${endTs}:D>) — ${dmOk ? "re-sent their DM with the claim link." : "couldn't DM them (DMs closed)."}`);
+      } else {
+        await interaction.editReply(`<@${target.id}> already had a trial before — not giving another.`);
+      }
+      return;
+    }
+    if (sub) {
+      await interaction.editReply(`<@${target.id}> is already on **${sub.tier}** — a trial would downgrade them, so I skipped it.`);
+      return;
+    }
+  }
+  const r = await giveTrial(interaction.client, interaction.guildId!, target.id, target.username, days);
+  const endTs = Math.floor(r.end.getTime() / 1000);
+  await interaction.editReply(
+    `✅ <@${target.id}> got a **${days}-day Standard trial** (until <t:${endTs}:D>) + a free 1–25 account to claim.` +
+      (r.roleOk ? "" : "\n⚠️ Couldn't give the Standard role — run /syncroles.") +
+      (r.dmOk ? "" : "\n📭 Their DMs are closed, so they didn't get the message.")
+  );
+  await logToStaff(`🎟️ ${interaction.user.username} gave a ${days}-day trial to <@${target.id}>`).catch(() => {});
 }
 
 // ── Step 2: run ───────────────────────────────────────────────────────────
@@ -201,7 +282,6 @@ export async function handleButton(interaction: ButtonInteraction) {
 
   const client = interaction.client;
   const guildId = interaction.guildId!;
-  const stdRole = process.env.DISCORD_ROLE_STANDARD;
   const stats = { given: 0, dmFailed: 0, roleFailed: 0, errors: 0 };
   const errors: string[] = [];
   const progress = (msg: string) => interaction.editReply({ content: msg }).catch(() => {}); // token lasts 15 min
@@ -210,34 +290,13 @@ export async function handleButton(interaction: ButtonInteraction) {
     // Re-check right now (someone may have subscribed since the preview).
     const plan = await buildPlan(client, guildId, roleId);
     const total = plan.eligible.length;
-    const claimRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setLabel("Claim my free account").setEmoji("🎮").setStyle(ButtonStyle.Link).setURL(`${BASE}/?claim=trial`)
-    );
 
     for (const [i, m] of plan.eligible.entries()) {
       const u = m.user!;
       try {
-        const userId = await ensureUser(u.id, u.username);
-        const { end, subscriptionId } = await applyPlan(userId, "standard", days, { trial: true });
-        // €0 marker: "had a trial" + unlocks the free 1–25 account.
-        const mark = await db.from("sub_invoices").insert({
-          subscription_id: subscriptionId,
-          user_id: userId,
-          tier: "standard",
-          amount_cents: 0,
-          currency: "eur",
-          purpose: "trial",
-          paid_at: new Date().toISOString(),
-        });
-        if (mark.error) throw mark.error;
-
-        if (stdRole) {
-          await client.rest.put(Routes.guildMemberRole(guildId, u.id, stdRole)).catch(() => { stats.roleFailed++; });
-        } else stats.roleFailed++;
-
-        await client.users
-          .send(u.id, { embeds: [dmEmbed(days, Math.floor(end.getTime() / 1000))], components: [claimRow] })
-          .catch(() => { stats.dmFailed++; }); // DMs closed — they still get everything
+        const r = await giveTrial(client, guildId, u.id, u.username, days);
+        if (!r.roleOk) stats.roleFailed++;
+        if (!r.dmOk) stats.dmFailed++; // DMs closed — they still get everything
         stats.given++;
       } catch (e) {
         stats.errors++;

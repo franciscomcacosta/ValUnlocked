@@ -904,6 +904,7 @@ function StockTab({ me }: { me: Me }) {
               ) : (
                 <SkinGrid
                   visibleSkins={visibleSkins}
+                  isHot={(s) => featuredRank(s) !== Infinity}
                   searching={q}
                   onClearSearch={() => setQuery("")}
                   weaponTabs={weaponTabs}
@@ -1178,10 +1179,11 @@ function StockTab({ me }: { me: Me }) {
 // ---- Skin grid with weapon sub-tabs + auto-select + entrance animation ----
 
 function SkinGrid({
-  visibleSkins, searching, onClearSearch, weaponTabs, weaponTab, onWeaponTab,
+  visibleSkins, isHot, searching, onClearSearch, weaponTabs, weaponTab, onWeaponTab,
   region, skinPage, setSkinPage, sel, setSel,
 }: {
   visibleSkins: FeaturedSkinRow[];
+  isHot: (s: FeaturedSkinRow) => boolean;
   searching: string;
   onClearSearch: () => void;
   weaponTabs: Array<{ label: string; count: number }>;
@@ -1244,6 +1246,7 @@ function SkinGrid({
           <SkinTile
             key={s.key}
             row={s}
+            hot={isHot(s)}
             region={region}
             selected={sel?.kind === "skin" && sel.row.key === s.key}
             onPick={() => setSel({ kind: "skin", row: s })}
@@ -1400,16 +1403,18 @@ function skinShortName(label: string, weapon: string): string {
 }
 
 function SkinTile({
-  row, region, selected, onPick,
+  row, hot: pinned, region, selected, onPick,
 }: {
   row: FeaturedSkinRow;
+  hot: boolean;
   region: Region;
   selected: boolean;
   onPick: () => void;
 }) {
   const soldOut = row.available === 0;
   const tc = row.tierColor ?? "var(--tier-standard)";
-  const hot = row.available >= 10;
+  // "Hot" marks only the hand-picked Featured skins (and only while in stock).
+  const hot = pinned && !soldOut;
   const stkCls = soldOut ? "out" : row.available < 5 ? "low" : "ok";
   return (
     <button

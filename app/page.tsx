@@ -556,7 +556,37 @@ function StockTab({ me }: { me: Me }) {
   const GUNS = ["Vandal", "Phantom", "Operator", "Sheriff", "Ghost", "Classic", "Spectre", "Bulldog", "Guardian", "Marshal", "Judge", "Bucky", "Stinger", "Ares", "Odin", "Shorty", "Frenzy", "Outlaw"];
   const isGun = (w: string) => GUNS.some((g) => g.toLowerCase() === w.toLowerCase());
   const isMelee = (w: string) => !isGun(w);
-  const isFeatured = (s: FeaturedSkinRow) => s.tier === "Ultra" || s.tier === "Exclusive";
+  // Only these weapon tabs are shown; every other skin is reachable via search.
+  const TAB_GUNS = ["Vandal", "Phantom", "Operator", "Sheriff"];
+
+  // Hand-picked Featured order. Pinned skins come first (in this order,
+  // when in stock); the rest of the Ultra / Exclusive skins follow.
+  const FEATURED_ORDER = [
+    "Champions 2021 Karambit",
+    "Champions 2021 Vandal",
+    "Arcane Sheriff",
+    "Reaver Karambit",
+    "Champions 2022 Butterfly Knife",
+    "Reaver Vandal",
+    "Champions 2022 Phantom",
+    "Prime Vandal",
+    "Champions 2023 Kunai",
+    "Kuronami Vandal",
+    "Champions 2023 Vandal",
+    "Kuronami no Yaiba",
+    "Champions 2024 Blade",
+    "Champions 2024 Phantom",
+    "Champions 2025 Butterfly Knife",
+    "Champions 2025 Vandal",
+    "Champions 2026 Fan",
+    "Champions 2026 Phantom",
+  ].map((n) => n.toLowerCase());
+  const featuredRank = (s: FeaturedSkinRow) => {
+    const i = FEATURED_ORDER.indexOf(s.label.toLowerCase());
+    return i === -1 ? Infinity : i;
+  };
+  const isFeatured = (s: FeaturedSkinRow) =>
+    featuredRank(s) !== Infinity || s.tier === "Ultra" || s.tier === "Exclusive";
 
   const q = query.trim().toLowerCase();
   const searchFiltered = (featured ?? []).filter((s) =>
@@ -565,15 +595,20 @@ function StockTab({ me }: { me: Me }) {
   // Like the designer: a search shows matches across every weapon.
   const visibleSkins = q
     ? searchFiltered
+    : !weaponTab
+    ? searchFiltered
+        .filter(isFeatured)
+        .map((s, i) => ({ s, i }))
+        .sort((a, b) => featuredRank(a.s) - featuredRank(b.s) || a.i - b.i)
+        .map((x) => x.s)
     : searchFiltered.filter((s) =>
-        !weaponTab ? isFeatured(s) : weaponTab === "Melee" ? isMelee(s.weapon) : s.weapon.toLowerCase() === weaponTab.toLowerCase()
+        weaponTab === "Melee" ? isMelee(s.weapon) : s.weapon.toLowerCase() === weaponTab.toLowerCase()
       );
 
   const weaponTabs: Array<{ label: string; count: number }> = [
     { label: "Featured", count: searchFiltered.filter(isFeatured).length },
     { label: "Melee", count: searchFiltered.filter((s) => isMelee(s.weapon)).length },
-    ...GUNS.map((g) => ({ label: g, count: searchFiltered.filter((s) => s.weapon.toLowerCase() === g.toLowerCase()).length }))
-      .filter((t) => t.count > 0),
+    ...TAB_GUNS.map((g) => ({ label: g, count: searchFiltered.filter((s) => s.weapon.toLowerCase() === g.toLowerCase()).length })),
   ];
 
   // Skin auto-select lives here (not in SkinGrid) so it runs AFTER the

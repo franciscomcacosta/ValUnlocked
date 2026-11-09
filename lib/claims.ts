@@ -13,7 +13,7 @@ import { db } from "./supabase";
 import { encrypt, decrypt } from "./crypto";
 import { notifyDiscordUser, logToStaff } from "./discord";
 import { getOrders } from "./qvsp";
-import { openTicket, uploadVideo, attachProof, sayOnTicket, getTicket, type TicketView } from "./qvsp-replace";
+import { openTicket, uploadProof, getTicket, type TicketView } from "./qvsp-replace";
 
 export const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 export const CLAIM_SUBMIT_GRACE_MS = 10 * 60 * 1000;   // upload may finish after the window
@@ -128,8 +128,16 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
   try { accountUsername = inv?.login_enc ? decrypt(inv.login_enc as string) : null; } catch { accountUsername = null; }
   if (!accountUsername) return fail("lookup", "couldn't read the account login for this order");
 
+  // 1) Upload the buyer's video → proof_token (qvsp requires this first).
+  if (!c.video_path) return fail("video", "this claim has no video");
+  const { data: file } = await db.storage.from(VIDEO_BUCKET).download(c.video_path);
+  if (!file) return fail("video", "couldn't read the uploaded video from storage");
+  const proof = await uploadProof({ file, filename: c.video_path.split("/").pop() ?? "proof.mp4", qvspOrderId });
+  if (!proof.ok || !proof.proofToken) return fail("upload video", proof.body);
+
+  // 2) Open the ticket with that token.
   const message = `${reasonLabel}${c.details ? ` — ${c.details}` : ""}. Buyer screen recording attached.`;
-  const opened = await openTicket({ qvspOrderId, reason: c.reason, message, accountUsername, details: c.details });
+  const opened = await openTicket({ qvspOrderId, reason: c.reason, message, accountUsername, details: c.details, proofToken: proof.proofToken });
   if (!opened.ok || !opened.ticketId) return fail("open ticket", opened.body);
 
   await db
@@ -137,21 +145,7 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
     .update({ qvsp_ticket_id: opened.ticketId, status: "under_review", qvsp_status: "open" })
     .eq("id", claimId);
 
-  if (c.video_path) {
-    const { data: file } = await db.storage.from(VIDEO_BUCKET).download(c.video_path);
-    let proofRef: string | null = null;
-    if (file) {
-      const up = await uploadVideo({ ticketId: opened.ticketId, file, filename: c.video_path.split("/").pop() ?? "proof.mp4" });
-      if (up.ok) proofRef = up.proofRef;
-      else await fail("upload video", up.body);
-    }
-    const att = await attachProof({ ticketId: opened.ticketId, proofRef, videoUrl });
-    if (!att.ok) {
-      // Fall back to posting the link as a message so qvsp still sees it.
-      const said = videoUrl ? await sayOnTicket(opened.ticketId, `Video proof: ${videoUrl}`) : { ok: false, body: "no url" };
-      if (!said.ok) await fail("attach proof", att.body);
-    }
-  }
+  await db.from("replacement_claims").update({ forward_error: null }).eq("id", claimId);
   await logToStaff(`🧾 Claim ${claimId} sent to qvsp as ticket ${opened.ticketId} (${reasonLabel}).`);
 }
 

@@ -87,6 +87,7 @@ export async function openTicket(opts: {
   message: string;
   accountUsername?: string | null;
   details?: string | null;
+  proofToken: string;
 }) {
   const res = await qvspRaw("/replace", {
     json: {
@@ -94,6 +95,9 @@ export async function openTicket(opts: {
       // Required by qvsp: login of the account being replaced + a category.
       account_username: opts.accountUsername ?? undefined,
       category: qvspCategory(opts.reason, opts.details),
+      // qvsp requires the video to be uploaded first (uploadProof) and its
+      // token sent with the ticket.
+      proof_token: opts.proofToken,
       reason: opts.reason,
       message: opts.message,
     },
@@ -101,7 +105,27 @@ export async function openTicket(opts: {
   return { ...res, ticketId: res.ok ? ticketIdFrom(res.body) : null };
 }
 
-/** Upload the video file; returns qvsp's proof reference if it gives one. */
+/** Step 1 of a qvsp ticket: upload the buyer's video, get a proof_token. */
+export async function uploadProof(opts: { file: Blob; filename: string; qvspOrderId?: string }) {
+  const send = (field: string) => {
+    const form = new FormData();
+    if (opts.qvspOrderId) form.append("order_id", opts.qvspOrderId);
+    form.append(field, opts.file, opts.filename);
+    return qvspRaw("/replace/proof", { form });
+  };
+  let res = await send("video");
+  // If qvsp names a different file field, retry once with "file".
+  if (!res.ok && res.status >= 400 && res.status < 500 && /file|video|missing|required/i.test(JSON.stringify(res.body ?? ""))) {
+    const again = await send("file");
+    if (again.ok) res = again;
+  }
+  const proofToken = res.ok
+    ? pick(res.body, ["proof_token", "token", "data.proof_token", "proof.proof_token", "proof.token", "data.token"])
+    : null;
+  return { ...res, proofToken };
+}
+
+/** (Legacy) Upload the video to an existing ticket. */
 export async function uploadVideo(opts: { ticketId: string; file: Blob; filename: string }) {
   const form = new FormData();
   form.append("ticket_id", opts.ticketId);

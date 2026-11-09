@@ -297,7 +297,6 @@ input, select, textarea {
   padding: 8px 12px;
   background: #0a1018;
   border-top: 1px solid color-mix(in srgb, var(--tc, #ef4444) 35%, transparent);
-  margin: 0 -1px -1px;
 }
 /* Corner tier ribbon (SkinTile) — mirrors the designer's "FRENZY" chip. */
 .tier-ribbon {

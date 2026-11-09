@@ -1124,7 +1124,11 @@ function SkinGrid({
               // whole page doesn't fade in as one block.
               animation: "skin-rise 420ms cubic-bezier(.2,.8,.2,1) both",
               animationDelay: `${i * 40}ms`,
+              minWidth: 0,
               minHeight: 0,
+              width: "100%",
+              height: "100%",
+              display: "flex",
             }}
           >
             <SkinTile
@@ -1349,7 +1353,7 @@ function SkinTile({
       disabled={soldOut}
       onClick={onPick}
       className={`tile cs ${selected ? "on" : ""}`}
-      style={{ ["--tc" as string]: tc }}
+      style={{ ["--tc" as string]: tc, width: "100%", height: "100%" }}
       aria-label={`${row.label} ${row.weapon}, from €${eur(row.finalCents)}`}
     >
       <span className="glow" />

@@ -13,7 +13,7 @@ import { db } from "./supabase";
 import { encrypt, decrypt } from "./crypto";
 import { notifyDiscordUser, logToStaff } from "./discord";
 import { getOrders } from "./qvsp";
-import { openTicket, uploadProof, getTicket, type TicketView } from "./qvsp-replace";
+import { openTicket, uploadProof, getTicket, qvspCategory, type TicketView } from "./qvsp-replace";
 
 export const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 export const CLAIM_SUBMIT_GRACE_MS = 10 * 60 * 1000;   // upload may finish after the window
@@ -132,7 +132,13 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
   if (!c.video_path) return fail("video", "this claim has no video");
   const { data: file } = await db.storage.from(VIDEO_BUCKET).download(c.video_path);
   if (!file) return fail("video", "couldn't read the uploaded video from storage");
-  const proof = await uploadProof({ file, filename: c.video_path.split("/").pop() ?? "proof.mp4", qvspOrderId });
+  const proof = await uploadProof({
+    file,
+    filename: c.video_path.split("/").pop() ?? "proof.mp4",
+    qvspOrderId,
+    accountUsername,
+    category: qvspCategory(c.reason, c.details),
+  });
   if (!proof.ok || !proof.proofToken) return fail("upload video", proof.body);
 
   // 2) Open the ticket with that token.

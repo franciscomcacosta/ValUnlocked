@@ -106,16 +106,25 @@ export async function openTicket(opts: {
 }
 
 /** Step 1 of a qvsp ticket: upload the buyer's video, get a proof_token. */
-export async function uploadProof(opts: { file: Blob; filename: string; qvspOrderId?: string }) {
+export async function uploadProof(opts: {
+  file: Blob;
+  filename: string;
+  qvspOrderId?: string;
+  accountUsername?: string | null;
+  category?: QvspCategory;
+}) {
   const send = (field: string) => {
     const form = new FormData();
     if (opts.qvspOrderId) form.append("order_id", opts.qvspOrderId);
+    // qvsp requires these on the proof upload too.
+    if (opts.accountUsername) form.append("account_username", opts.accountUsername);
+    if (opts.category) form.append("category", opts.category);
     form.append(field, opts.file, opts.filename);
     return qvspRaw("/replace/proof", { form });
   };
   let res = await send("video");
   // If qvsp names a different file field, retry once with "file".
-  if (!res.ok && res.status >= 400 && res.status < 500 && /file|video|missing|required/i.test(JSON.stringify(res.body ?? ""))) {
+  if (!res.ok && res.status >= 400 && res.status < 500 && /\b(file|video)\b/i.test(JSON.stringify(res.body ?? ""))) {
     const again = await send("file");
     if (again.ok) res = again;
   }

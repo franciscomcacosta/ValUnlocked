@@ -603,6 +603,7 @@ function StockTab({ me }: { me: Me }) {
     if (sel.kind === "bracket") {
       return {
         kind: "bracket" as const,
+        bracket: sel.row.bracket,
         range: bracketRange(sel.row.label),
         tc: bracketTierColor(sel.row.bracket),
         // Name shown in the title row under the hero. Just the range —
@@ -961,7 +962,7 @@ function StockTab({ me }: { me: Me }) {
             >
               <span style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                 <span className="h" style={{ fontSize: "22px" }}>{selDisplay.titleName}</span>
-                {selDisplay.kind === "bracket" && selDisplay.range === "1-25" && (
+                {selDisplay.kind === "bracket" && selDisplay.bracket === SHOP_SKIN_BRACKET && (
                   <span className="bc" style={{ fontSize: "11px", color: "var(--accent-success)", letterSpacing: "0.1em" }}>
                     Always includes a shop skin
                   </span>
@@ -1234,6 +1235,9 @@ const BRACKET_COLOR: Record<string, string> = {
   s_200_plus: "#ff4655",
 };
 
+// The 1–25 bracket guarantees at least one shop (store-bought) skin.
+const SHOP_SKIN_BRACKET = "s_1_25";
+
 function bracketTierColor(bracket: string): string {
   return BRACKET_COLOR[bracket] ?? "var(--vu-red)";
 }
@@ -1291,6 +1295,25 @@ function BracketTile({
       >
         <span className="h num" style={{ fontSize: "52px", color: "#fff" }}>{range}</span>
         <span className="bc" style={{ fontSize: "15px", fontWeight: 600, color: tc }}>Skins</span>
+        {row.bracket === SHOP_SKIN_BRACKET && (
+          <span
+            className="bc"
+            style={{
+              marginTop: "6px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              fontSize: "11px",
+              fontWeight: 700,
+              letterSpacing: "0.06em",
+              color: "#0f1923",
+              background: "#ffd400",
+              padding: "1px 6px",
+            }}
+          >
+            ★ Always includes a shop skin
+          </span>
+        )}
       </span>
       <span
         style={{

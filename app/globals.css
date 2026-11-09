@@ -841,3 +841,36 @@ main > div { animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 /* Selected X-Ray row keeps its dark fill on hover (the hover fill used to
    win, leaving white text on light grey — looked like a ghost duplicate). */
 .tbl.click tbody tr.on:hover td { background: var(--vu-navy); color: #fff; }
+
+/* Order page: "Getting email…" while the email is being fetched */
+.email-getting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  background: linear-gradient(90deg, #8b97a5 0%, #0f1923 45%, #8b97a5 90%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: email-shimmer 1.6s linear infinite;
+}
+.email-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: #f5b301;
+  box-shadow: 0 0 0 0 rgba(245, 179, 1, 0.6);
+  animation: email-ping 1.4s ease-out infinite;
+}
+@keyframes email-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes email-ping {
+  0% { box-shadow: 0 0 0 0 rgba(245, 179, 1, 0.55); }
+  80%, 100% { box-shadow: 0 0 0 8px rgba(245, 179, 1, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .email-getting { animation: none; color: #5b6474; background: none; }
+  .email-dot { animation: none; }
+}

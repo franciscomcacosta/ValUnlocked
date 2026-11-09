@@ -104,6 +104,15 @@ function Placeholder({ label }: { label?: string }) {
   );
 }
 
+// The account's email can arrive after delivery (it's fetched separately).
+// Until it's filled in, the Email row shows "Getting email…".
+const isEmailKey = (k: string) => k === "Email" || k === "Email password";
+const isBlank = (v: string | null | undefined) => !v || v.trim() === "" || v.trim() === "—";
+function emailPending(d: OrderPayload): boolean {
+  const e = d.credentials?.find((c) => c.key === "Email");
+  return !e || isBlank(e.value);
+}
+
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
@@ -115,6 +124,8 @@ export default function OrderDetailPage() {
   const [reportOpen, setReportOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dataRef = useRef<OrderPayload | null>(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
 
   useEffect(() => {
     if (!id) return;
@@ -130,9 +141,11 @@ export default function OrderDetailPage() {
       }
     }
     load();
-    // Poll every 6s while not delivered — worker callback may fire any time.
+    // Poll every 6s until delivered AND the email has arrived — the order
+    // can be delivered before the email is filled in ("Getting email…").
     const tick = setInterval(() => {
-      if (data && data.status === "delivered") return;
+      const d = dataRef.current;
+      if (d && d.status === "delivered" && !emailPending(d)) return;
       load();
     }, 6000);
     return () => {
@@ -209,7 +222,7 @@ export default function OrderDetailPage() {
       : [
           { key: "Username", value: "—" },
           { key: "Password", value: "—" },
-          { key: "Email",    value: waiting ? "Extracting…" : "—" },
+          { key: "Email",    value: "" },
           { key: "Riot ID",  value: "—" },
         ];
 
@@ -542,12 +555,26 @@ export default function OrderDetailPage() {
               }}
             >
               {creds.map((c) => {
+                const pending = isEmailKey(c.key) && isBlank(c.value);
                 const shown =
                   c.key === "Password" && !reveal
                     ? pw && pw !== "—"
                       ? "•".repeat(Math.max(8, Math.min(14, pw.length)))
                       : c.value
                     : c.value;
+                if (pending) {
+                  return (
+                    <div className="cred cred-pending" key={c.key} aria-live="polite">
+                      <span className="lbl" style={{ width: 64, flex: "none", fontSize: "12px" }}>
+                        {c.key}
+                      </span>
+                      <span className="email-getting" style={{ flex: 1, minWidth: 0 }}>
+                        <span className="email-dot" aria-hidden="true" />
+                        Getting email…
+                      </span>
+                    </div>
+                  );
+                }
                 return (
                   <div className="cred" key={c.key}>
                     <span
@@ -557,7 +584,8 @@ export default function OrderDetailPage() {
                       {c.key}
                     </span>
                     <span
-                      className="mono"
+                      key={isEmailKey(c.key) ? `${c.key}:${c.value}` : c.key}
+                      className={isEmailKey(c.key) ? "mono rise" : "mono"}
                       style={{
                         flex: 1,
                         minWidth: 0,

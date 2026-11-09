@@ -75,8 +75,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       credentials = [
         { key: "Username", value: decrypt(inv.login_enc) },
         { key: "Password", value: decrypt(inv.password_enc) },
-        { key: "Email", value: decrypt(inv.email_enc) || "—" },
-        { key: "Email password", value: decrypt(inv.email_password_enc) || "—" },
+        // Empty until the email has been fetched — the page shows
+        // "Getting email…" for these and fills them in when they arrive.
+        { key: "Email", value: decrypt(inv.email_enc) || "" },
+        { key: "Email password", value: decrypt(inv.email_password_enc) || "" },
       ];
     }
   }

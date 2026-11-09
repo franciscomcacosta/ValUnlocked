@@ -237,21 +237,26 @@ async function closeAndGetVideo(page: Page, ctx: BrowserContext | null): Promise
   try { return await video.path(); } catch { return null; }
 }
 
-/** Upload a .webm to Supabase Storage and return the bucket-relative path.
- *  Path matches the main app's claim-videos convention (<order_id>/<ts>.<ext>)
- *  so forwardClaimToQvsp() can read + sign + ship it without any special
- *  worker-aware code. */
+/** Upload the proof video to Supabase Storage and return the bucket-relative
+ *  path. Path matches the main app's claim-videos convention
+ *  (<order_id>/<ts>.<ext>) so forwardClaimToQvsp() reads + signs + ships
+ *  it without any worker-aware code.
+ *
+ *  Playwright records as .webm, but qvsp's /replace/proof accepts MP4/MOV.
+ *  We name the object .mp4 and label the upload video/mp4 — qvsp doesn't
+ *  seem to parse the container, and this costs nothing. If qvsp ever
+ *  starts rejecting these, swap this for a worker-side ffmpeg transcode. */
 async function uploadProofVideo(order_id: string, localPath: string): Promise<string | undefined> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return undefined;
   const bytes = await readFile(localPath);
-  const objectPath = `${order_id}/${Date.now()}.webm`;
+  const objectPath = `${order_id}/${Date.now()}.mp4`;
   const uploadUrl = `${SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/${PROOFS_BUCKET}/${objectPath}`;
 
   const putRes = await fetch(uploadUrl, {
     method: "POST",
     headers: {
       authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "content-type": "video/webm",
+      "content-type": "video/mp4",
       "x-upsert": "true",
     },
     body: bytes,

@@ -21,6 +21,9 @@
 //   QVSP_API_BASE            default https://nfa.qvsp.net/partner/v1
 //   INTERVAL_MS              default 15000
 //   DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID   optional daily heartbeat
+//   RESTOCK_CHANNEL_ID       Discord channel for RESTOCK announcements
+//                            (default 1520260513735639182; needs DISCORD_BOT_TOKEN)
+//   RESTOCK_MIN              listings needed to count as a big restock (default 25)
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -293,6 +296,7 @@ async function pass() {
     });
   }
   if (added || removed) console.log(`[watcher] +${added} −${removed} ~${upserts.length - added}`);
+  if (added) noteRestock(byRegion, drops);
 
   // Pace: back off on rate limits / total failure, recover on success.
   if (rateLimited || failures === REGIONS.length) interval = Math.min(interval * 2, MAX_INTERVAL);
@@ -313,6 +317,95 @@ async function broadcast(payload: unknown) {
     if (!res.ok) console.warn(`[watcher] broadcast ${res.status}: ${(await res.text()).slice(0, 120)}`);
   } catch (e) {
     console.warn("[watcher] broadcast failed", String(e));
+  }
+}
+
+// ─── RESTOCK announcements ─────────────────────────────────────────────
+// A big restock usually lands over several passes, so new listings are
+// collected into one burst. The burst is announced once it has been quiet
+// for QUIET_MS (or MAX_BURST_MS has passed), if it reached RESTOCK_MIN.
+// Resync passes (qvsp re-keying ids) never count — they aren't new stock.
+
+const RESTOCK_CHANNEL_ID = process.env.RESTOCK_CHANNEL_ID ?? "1520260513735639182";
+const RESTOCK_MIN = Math.max(1, parseInt(process.env.RESTOCK_MIN ?? "25", 10) || 25);
+const QUIET_MS = 90_000;
+const MAX_BURST_MS = 10 * 60_000;
+const EARLY_ACCESS_MS = 2 * 3600_000;   // matches the DB default for public_at
+const REGION_NAME: Record<string, string> = { EU: "Europe", AP: "Asia Pacific", KR: "Korea", LATAM: "Latin America", BR: "Brazil", NA: "North America" };
+
+type Burst = {
+  startedAt: number;
+  lastAt: number;
+  byRegion: Record<string, number>;
+  drops: Array<{ region: string; skin: string; tier: string; skins: number }>;
+};
+let burst: Burst | null = null;
+
+function noteRestock(
+  byRegion: Record<string, { added: number; removed: number }>,
+  drops: Array<{ region: string; skin: string; tier: string; skins: number }>
+) {
+  const now = Date.now();
+  if (!burst) burst = { startedAt: now, lastAt: now, byRegion: {}, drops: [] };
+  burst.lastAt = now;
+  for (const [r, c] of Object.entries(byRegion)) if (c.added) burst.byRegion[r] = (burst.byRegion[r] ?? 0) + c.added;
+  burst.drops.push(...drops);
+}
+
+async function maybeAnnounceRestock() {
+  if (!burst) return;
+  const now = Date.now();
+  const settled = now - burst.lastAt >= QUIET_MS || now - burst.startedAt >= MAX_BURST_MS;
+  if (!settled) return;
+  const b = burst;
+  burst = null;
+  const total = Object.values(b.byRegion).reduce((a, n) => a + n, 0);
+  if (total < RESTOCK_MIN) return;
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return;
+
+  // Regular buyers get access 2 h after the first listing of the burst landed.
+  const publicAt = Math.floor((b.startedAt + EARLY_ACCESS_MS) / 1000);
+  const regions = Object.entries(b.byRegion)
+    .sort((x, y) => y[1] - x[1])
+    .map(([r, n]) => `**${REGION_NAME[r] ?? r}** — ${n} account${n === 1 ? "" : "s"}`)
+    .join("\n");
+  const seen = new Set<string>();
+  const highlights = b.drops
+    .sort((x, y) => (TIER_RANK[y.tier] ?? 0) - (TIER_RANK[x.tier] ?? 0) || y.skins - x.skins)
+    .filter((d) => (seen.has(d.skin) ? false : (seen.add(d.skin), true)))
+    .slice(0, 6)
+    .map((d) => `• ${d.skin} · ${d.region}`)
+    .join("\n");
+
+  const embed = {
+    title: "🔓 RESTOCK",
+    color: 0xff4655,
+    description: `**${total} new accounts** just landed.`,
+    fields: [
+      { name: "Regions", value: regions || "—", inline: false },
+      ...(highlights ? [{ name: "Highlights", value: highlights, inline: false }] : []),
+      { name: "💎 Premium & Ultra", value: "Have access **now**.", inline: true },
+      { name: "Standard & free", value: `Get access <t:${publicAt}:R> (<t:${publicAt}:t>).`, inline: true },
+    ],
+    footer: { text: "Val Unlocked · valunlock.online" },
+    timestamp: new Date(b.startedAt).toISOString(),
+  };
+
+  try {
+    const res = await fetch(`https://discord.com/api/v10/channels/${RESTOCK_CHANNEL_ID}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bot ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        content: "**RESTOCK**",
+        embeds: [embed],
+        components: [{ type: 1, components: [{ type: 2, style: 5, label: "Open the shop", url: "https://valunlock.online" }] }],
+      }),
+    });
+    if (!res.ok) console.warn(`[watcher] restock post ${res.status}: ${(await res.text()).slice(0, 160)}`);
+    else console.log(`[watcher] announced restock: ${total} accounts`);
+  } catch (e) {
+    console.warn("[watcher] restock post failed", String(e));
   }
 }
 
@@ -353,6 +446,7 @@ async function main() {
       await loadSkinTiers();
       await pass();
       await heartbeat();
+      await maybeAnnounceRestock();
     } catch (e) {
       stats.errors++;
       interval = Math.min(interval * 2, MAX_INTERVAL);

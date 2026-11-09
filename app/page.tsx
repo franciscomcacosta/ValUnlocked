@@ -697,25 +697,52 @@ function StockTab({ me }: { me: Me }) {
           )}
           <div style={{ flex: 1, minWidth: 12 }} />
           {mode === "skin" && (
-            <div style={{ position: "relative", width: "230px", maxWidth: "100%" }}>
-              <svg
-                width="16" height="16" viewBox="0 0 24 24" fill="none"
-                stroke="#8b97a5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                aria-hidden="true"
-                style={{ position: "absolute", left: "10px", top: "11px", pointerEvents: "none" }}
-              >
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                className="inp"
-                type="search"
-                placeholder="Search named skins…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                style={{ height: "38px", paddingLeft: "34px" }}
-                aria-label="Search skins"
-              />
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {/* Popular-query chips — one-click search shortcuts. Click
+                  the active one to clear the search. */}
+              {["champ", "kuro", "reaver"].map((q) => {
+                const active = query.toLowerCase() === q;
+                return (
+                  <button
+                    key={q}
+                    className="chip"
+                    onClick={() => setQuery(active ? "" : q)}
+                    style={{
+                      cursor: "pointer",
+                      background: active ? "var(--vu-navy)" : "var(--vu-divider)",
+                      color: active ? "#fff" : "#334155",
+                      border: 0,
+                      textTransform: "lowercase",
+                      letterSpacing: "0.02em",
+                      fontWeight: 600,
+                      transition: "background-color 140ms, color 140ms",
+                    }}
+                    title={active ? "Clear search" : `Search "${q}"`}
+                  >
+                    {q}
+                  </button>
+                );
+              })}
+              <div style={{ position: "relative", width: "230px", maxWidth: "100%" }}>
+                <svg
+                  width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke="#8b97a5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  aria-hidden="true"
+                  style={{ position: "absolute", left: "10px", top: "11px", pointerEvents: "none" }}
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+                <input
+                  className="inp"
+                  type="search"
+                  placeholder="Search named skins…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  style={{ height: "38px", paddingLeft: "34px" }}
+                  aria-label="Search skins"
+                />
+              </div>
             </div>
           )}
         </div>

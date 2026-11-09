@@ -63,9 +63,15 @@ export function ticketIdFrom(body: unknown): string | null {
   return pick(body, ["ticket_id", "ticket.id", "ticket.ticket_id", "data.ticket_id", "data.id", "id", "replacement.ticket_id"]);
 }
 
-export async function openTicket(opts: { qvspOrderId: string; reason: string; message: string }) {
+export async function openTicket(opts: { qvspOrderId: string; reason: string; message: string; accountUsername?: string | null }) {
   const res = await qvspRaw("/replace", {
-    json: { order_id: opts.qvspOrderId, reason: opts.reason, message: opts.message },
+    json: {
+      order_id: opts.qvspOrderId,
+      // qvsp requires the login of the account being replaced.
+      account_username: opts.accountUsername ?? undefined,
+      reason: opts.reason,
+      message: opts.message,
+    },
   });
   return { ...res, ticketId: res.ok ? ticketIdFrom(res.body) : null };
 }

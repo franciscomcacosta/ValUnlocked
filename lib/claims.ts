@@ -10,7 +10,7 @@
 //     5% apology bonus.
 //   • Denied → no credit; the buyer is told and can open a Discord ticket.
 import { db } from "./supabase";
-import { encrypt } from "./crypto";
+import { encrypt, decrypt } from "./crypto";
 import { notifyDiscordUser, logToStaff } from "./discord";
 import { getOrders } from "./qvsp";
 import { openTicket, uploadVideo, attachProof, sayOnTicket, getTicket, type TicketView } from "./qvsp-replace";
@@ -35,6 +35,7 @@ export type ClaimRow = {
   id: string;
   order_id: string;
   user_id: string;
+  forward_error?: string | null;
   reason: string;
   details: string | null;
   video_path: string | null;
@@ -101,6 +102,7 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
   const fail = async (step: string, detail: unknown) => {
     const msg = `${step}: ${typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 400)}`;
     await db.from("replacement_claims").update({ forward_error: msg }).eq("id", claimId);
+    if (c.forward_error === msg) return; // same failure as last try — don't spam staff
     await logToStaff(
       `🧾 Claim ${claimId} (order ${c.order_id}) — couldn't forward to qvsp (${msg}).\n` +
         `Reason: ${reasonLabel}${c.details ? ` — "${c.details}"` : ""}\n` +
@@ -111,8 +113,17 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
   const qvspOrderId = await resolveQvspOrderId(c.order_id);
   if (!qvspOrderId) return fail("lookup", "no qvsp order id for this order");
 
+  // The login of the delivered account (qvsp's ticket form requires it).
+  const { data: ord } = await db.from("orders").select("inventory_id").eq("id", c.order_id).single();
+  const { data: inv } = ord?.inventory_id
+    ? await db.from("inventory").select("login_enc").eq("id", ord.inventory_id).single()
+    : { data: null };
+  let accountUsername: string | null = null;
+  try { accountUsername = inv?.login_enc ? decrypt(inv.login_enc as string) : null; } catch { accountUsername = null; }
+  if (!accountUsername) return fail("lookup", "couldn't read the account login for this order");
+
   const message = `${reasonLabel}${c.details ? ` — ${c.details}` : ""}. Buyer screen recording attached.`;
-  const opened = await openTicket({ qvspOrderId, reason: c.reason, message });
+  const opened = await openTicket({ qvspOrderId, reason: c.reason, message, accountUsername });
   if (!opened.ok || !opened.ticketId) return fail("open ticket", opened.body);
 
   await db
@@ -244,6 +255,17 @@ export async function syncClaim(claimId: string): Promise<string> {
 
 /** Sync every open claim (cron fallback for missed webhooks). */
 export async function syncOpenClaims(): Promise<Record<string, number>> {
+  // Claims that never reached qvsp (forwarding failed) — try again for 24h.
+  const { data: unsent } = await db
+    .from("replacement_claims")
+    .select("id")
+    .eq("status", "submitted")
+    .is("qvsp_ticket_id", null)
+    .not("forward_error", "is", null)
+    .gte("created_at", new Date(Date.now() - 24 * 3_600_000).toISOString())
+    .limit(20);
+  for (const row of unsent ?? []) await forwardClaimToQvsp(row.id as string).catch(() => {});
+
   const { data } = await db
     .from("replacement_claims")
     .select("id")

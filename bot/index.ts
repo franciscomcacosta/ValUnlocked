@@ -5,7 +5,8 @@
 //   export async function execute(interaction) {...}
 //
 // Run with: npm run bot
-import { Client, GatewayIntentBits, Events, Collection, type ChatInputCommandInteraction, type ButtonInteraction } from "discord.js";
+import { Client, GatewayIntentBits, Events, Collection, type ChatInputCommandInteraction, type ButtonInteraction, type ModalSubmitInteraction } from "discord.js";
+import { startScheduler } from "./scheduler";
 import { readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +15,7 @@ interface CommandModule {
   data: { name: string; toJSON(): unknown };
   execute(interaction: ChatInputCommandInteraction): Promise<void>;
   handleButton?(interaction: ButtonInteraction): Promise<void>;
+  handleModal?(interaction: ModalSubmitInteraction): Promise<void>;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +40,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`[bot] ready as ${c.user.tag}`);
+  startScheduler();
   // Keep Discord's command list in sync with bot/commands on every start,
   // so new commands (e.g. /grant) appear without a separate register step.
   // Guild registration is instant; a single PUT replaces the whole list.
@@ -65,6 +68,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (e) {
       console.error(`[bot] /${interaction.commandName} failed`, e);
       const content = "Something broke running that. Try again or ping staff.";
+      if (interaction.replied || interaction.deferred) await interaction.followUp({ content, ephemeral: true });
+      else await interaction.reply({ content, ephemeral: true });
+    }
+    return;
+  }
+
+  // Modal dispatch — same "<command>:<arg>" customId convention as buttons.
+  if (interaction.isModalSubmit()) {
+    const [commandName] = interaction.customId.split(":");
+    const cmd = commands.get(commandName);
+    if (!cmd?.handleModal) return;
+    try {
+      await cmd.handleModal(interaction);
+    } catch (e) {
+      console.error(`[bot] modal ${interaction.customId} failed`, e);
+      const content = "Something broke. Try again.";
       if (interaction.replied || interaction.deferred) await interaction.followUp({ content, ephemeral: true });
       else await interaction.reply({ content, ephemeral: true });
     }

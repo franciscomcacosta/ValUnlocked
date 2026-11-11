@@ -13,7 +13,7 @@ import { db } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/session";
 import { notifyDiscordUser, logToStaff, setTierRole, clearTierRoles } from "@/lib/discord";
 import { tierLabel, type SubTier } from "@/lib/pricing";
-import { ADMIN_TIERS, applyPlan, changeCredit, eur, findUser, paidCents, removePlan } from "@/lib/admin";
+import { ADMIN_TIERS, applyPlan, changeCredit, claimRates, eur, findUser, paidCents, removePlan } from "@/lib/admin";
 import { creditChangedMessage, planGrantedMessage, staffMessage } from "@/lib/discord-messages";
 
 const base = () => process.env.PUBLIC_BASE_URL ?? "https://valunlock.online";
@@ -71,6 +71,7 @@ export async function GET(req: Request) {
         spentCents: list.filter((o) => o.status === "fulfilled").reduce((s, o) => s + paidCents(o), 0),
         ledger: ledger.data ?? [],
         claims: claims.data ?? [],
+        claimRate: (await claimRates([id]).catch(() => new Map())).get(id) ?? null,
         referral: {
           code: (r?.referral_code as string | null) ?? null,
           invited: invited.error ? 0 : invited.count ?? 0,

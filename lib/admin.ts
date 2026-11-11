@@ -111,3 +111,20 @@ export async function removePlan(userId: string): Promise<SubTier | null> {
   if (error) throw new Error(error.message);
   return current.tier as SubTier;
 }
+
+/** Claims vs delivered orders per user, for spotting refund abuse.
+ *  Flagged = 3+ claims AND claims on 40%+ of their delivered orders. */
+export async function claimRates(userIds: string[]): Promise<Map<string, { claims: number; orders: number; flagged: boolean }>> {
+  const out = new Map<string, { claims: number; orders: number; flagged: boolean }>();
+  const ids = [...new Set(userIds)].filter(Boolean);
+  if (!ids.length) return out;
+  const [{ data: claims }, { data: orders }] = await Promise.all([
+    db.from("replacement_claims").select("user_id").in("user_id", ids),
+    db.from("orders").select("user_id").in("user_id", ids).in("status", ["fulfilled", "refunded_credit"]),
+  ]);
+  for (const id of ids) out.set(id, { claims: 0, orders: 0, flagged: false });
+  for (const c of claims ?? []) out.get(c.user_id as string)!.claims++;
+  for (const o of orders ?? []) out.get(o.user_id as string)!.orders++;
+  for (const v of out.values()) v.flagged = v.claims >= 3 && v.claims / Math.max(v.orders, 1) >= 0.4;
+  return out;
+}

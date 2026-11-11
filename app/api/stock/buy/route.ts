@@ -20,6 +20,7 @@ import {
 } from "@/lib/pricing";
 import { createInvoice } from "@/lib/nowpayments";
 import { fulfilOrder } from "@/lib/fulfil";
+import { getSalesPause, getCachedBalance, PAUSED_MESSAGE } from "@/lib/shop-flags";
 
 export const runtime = "nodejs";
 // Credit-covered buys call fulfilOrder inline, which waits up to 90s on
@@ -38,6 +39,11 @@ export async function POST(req: Request) {
   const region = body?.region?.toUpperCase();
   if (!region || !REGIONS.has(region)) {
     return Response.json({ error: "invalid_region" }, { status: 400 });
+  }
+
+  // Sales paused (qvsp balance too low, or staff paused them)?
+  if ((await getSalesPause()).paused) {
+    return Response.json({ error: PAUSED_MESSAGE, code: "sales_paused" }, { status: 503 });
   }
 
   // Get the user's tier once.
@@ -223,6 +229,19 @@ async function reserveAndInvoice(args: ReserveArgs): Promise<Response> {
   if (!reservedQvspId) {
     await db.from("orders").update({ status: "cancelled" }).eq("id", order.id);
     return Response.json({ error: "out_of_stock" }, { status: 409 });
+  }
+
+  // Can our qvsp balance actually pay for this account? If not, stop here —
+  // otherwise the buyer pays and the delivery gets stuck.
+  const balance = await getCachedBalance();
+  if (balance) {
+    const { data: acct } = await db.from("qvsp_stock").select("qvsp_price_cents").eq("qvsp_id", reservedQvspId).maybeSingle();
+    const cost = (acct?.qvsp_price_cents as number | undefined) ?? 0;
+    if (cost > balance.cents) {
+      await db.from("orders").update({ status: "cancelled" }).eq("id", order.id);
+      await db.rpc("release_qvsp_stock", { p_order_id: order.id });
+      return Response.json({ error: PAUSED_MESSAGE, code: "balance_low" }, { status: 503 });
+    }
   }
 
   // Apply store credit.

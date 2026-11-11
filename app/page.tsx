@@ -13,6 +13,7 @@ import { WelcomeGift } from "@/components/welcome-gift";
 import { ClaimOutcomeModal } from "@/components/claims";
 import { AdminPanel } from "@/components/admin-panel";
 import { InviteTab } from "@/components/referral";
+import { AlertsTab } from "@/components/restock-alerts";
 import { useStockFeed, useStockVersion, DropToasts, type StockDrop } from "@/components/live-stock";
 import { TOPUP_TIERS, TOPUP_BONUS_PCT } from "@/lib/pricing";
 
@@ -105,7 +106,7 @@ const eur = (c: number) => (c / 100).toFixed(2);
 // Root
 // ================================================================
 
-type TabKey = "stock" | "subscribe" | "purchases" | "invite" | "xray" | "autobuy" | "admin";
+type TabKey = "stock" | "subscribe" | "purchases" | "alerts" | "invite" | "xray" | "autobuy" | "admin";
 
 export default function Page() {
   const [me, setMe] = useState<Me | null>(null);
@@ -187,6 +188,7 @@ export default function Page() {
           <SubscribeTab me={me} reload={() => window.location.reload()} />
         )}
         {tab === "purchases" && <PurchasesTab />}
+        {tab === "alerts" && <AlertsTab earlyAccess={me.sub?.tier === "premium" || me.sub?.tier === "ultra"} onSubscribe={() => setTab("subscribe")} />}
         {tab === "invite" && <InviteTab />}
         {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} onOrders={() => setTab("purchases")} />}
         {tab === "autobuy" && <AutobuyTab me={me} isUltra={isUltra} onSub={() => setTab("subscribe")} onTopup={() => setTopup({ open: true, returnId: null })} />}
@@ -264,6 +266,7 @@ function Header({
             { key: "stock",      label: "Stock",         ultra: false },
             { key: "subscribe",  label: "Subscribe",     ultra: false },
             { key: "purchases",  label: "My Purchases",  ultra: false },
+            { key: "alerts",     label: "🔔 Alerts",     ultra: false },
             { key: "invite",     label: "Invite",        ultra: false },
             { key: "xray",       label: isUltra ? "⚡ X-RAY" : "🔒 X-RAY", ultra: true },
             { key: "autobuy",    label: isUltra ? "AUTO-BUY" : "🔒 AUTO-BUY", ultra: true },

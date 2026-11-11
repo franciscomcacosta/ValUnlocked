@@ -9,6 +9,7 @@ RUN echo '{"name":"vu-bot","private":true,"type":"module"}' > package.json \
  && npm install --omit=dev --no-audit --no-fund discord.js@14 @supabase/supabase-js@2 tsx@4
 
 COPY bot ./bot
-COPY lib/discord.ts lib/pricing.ts lib/supabase.ts ./lib/
+# Every lib/ file the bot imports (directly or indirectly) must be listed here.
+COPY lib/discord.ts lib/discord-messages.ts lib/pricing.ts lib/supabase.ts ./lib/
 
 CMD ["node", "--max-old-space-size=180", "--import", "tsx", "bot/index.ts"]

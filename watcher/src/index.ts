@@ -79,14 +79,16 @@ async function fetchRegion(region: string): Promise<QvspItem[]> {
 
 // ─── row mapping (mirrors app/api/cron/sync-qvsp) ───────────────────────
 
+// Same names/labels as SKIN_BRACKETS in lib/pricing.ts (restock alerts use them).
 const BRACKETS = [
-  { min: 1, max: 25, cents: 499 },
-  { min: 26, max: 50, cents: 699 },
-  { min: 51, max: 100, cents: 1199 },
-  { min: 101, max: 150, cents: 1799 },
-  { min: 151, max: 200, cents: 2299 },
-  { min: 201, max: 99_999, cents: 2799 },
+  { name: "s_1_25", label: "1–25 skins", min: 1, max: 25, cents: 499 },
+  { name: "s_26_50", label: "26–50 skins", min: 26, max: 50, cents: 699 },
+  { name: "s_51_100", label: "51–100 skins", min: 51, max: 100, cents: 1199 },
+  { name: "s_101_150", label: "101–150 skins", min: 101, max: 150, cents: 1799 },
+  { name: "s_151_200", label: "151–200 skins", min: 151, max: 200, cents: 2299 },
+  { name: "s_200_plus", label: "200+ skins", min: 201, max: 99_999, cents: 2799 },
 ];
+const bracketOf = (n: number) => BRACKETS.find((b) => n >= b.min && n <= b.max) ?? BRACKETS[0];
 const bracketCents = (n: number) => (BRACKETS.find((b) => n >= b.min && n <= b.max) ?? BRACKETS[0]).cents;
 const normalizeRank = (raw?: string | null) => {
   const s = (raw ?? "").trim().toLowerCase();
@@ -193,6 +195,7 @@ async function pass() {
   const upserts: Array<ReturnType<typeof toRow> & { public_at?: string }> = [];
   const removedIds: string[] = [];
   const drops: Array<{ region: string; skin: string; tier: string; skins: number }> = [];
+  const fresh: Array<{ region: string; skins: number }> = [];   // genuinely new listings (for restock alerts)
   const byRegion: Record<string, { added: number; removed: number }> = {};
   let failures = 0;
   let rateLimited = false;
@@ -239,6 +242,7 @@ async function pass() {
       const prev = known.get(item.id);
       if (!prev) {
         upserts.push(resync ? { ...row, public_at: now } : row);
+        if (!resync) fresh.push({ region: String(item.region).toUpperCase(), skins: item.skin_count ?? 0 });
         if (!resync) {
           reg.added++;
           const h = headlineSkin(item);
@@ -297,6 +301,7 @@ async function pass() {
   }
   if (added || removed) console.log(`[watcher] +${added} −${removed} ~${upserts.length - added}`);
   if (added) noteRestock(byRegion, drops);
+  if (fresh.length) await notifyRestockAlerts(fresh).catch((e) => console.warn("[watcher] restock alerts failed", String(e).slice(0, 200)));
 
   // Pace: back off on rate limits / total failure, recover on success.
   if (rateLimited || failures === REGIONS.length) interval = Math.min(interval * 2, MAX_INTERVAL);
@@ -325,6 +330,102 @@ async function broadcast(payload: unknown) {
 // collected into one burst. The burst is announced once it has been quiet
 // for QUIET_MS (or MAX_BURST_MS has passed), if it reached RESTOCK_MIN.
 // Resync passes (qvsp re-keying ids) never count — they aren't new stock.
+
+// ─── personal restock alerts (users' "🔔 Alerts" tab) ──────────────────
+// Matches new listings against restock_alerts (migration 010) and DMs each
+// matching user once, at most every 30 min per alert. Free/Standard users
+// are told when the drop opens up for them (Premium/Ultra get 2 h early).
+
+const ALERT_COOLDOWN_MS = 30 * 60_000;
+const SITE_URL = (process.env.PUBLIC_BASE_URL ?? "https://valunlock.online").replace(/\/+$/, "");
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function sendDm(discordId: string, payload: Record<string, unknown>): Promise<boolean> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) return false;
+  const headers = { authorization: `Bot ${token}`, "content-type": "application/json" };
+  const ch = await fetch("https://discord.com/api/v10/users/@me/channels", {
+    method: "POST", headers, body: JSON.stringify({ recipient_id: discordId }),
+  });
+  if (!ch.ok) return false;
+  const { id } = (await ch.json()) as { id: string };
+  const res = await fetch(`https://discord.com/api/v10/channels/${id}/messages`, {
+    method: "POST", headers, body: JSON.stringify({ ...payload, allowed_mentions: { parse: [] } }),
+  });
+  return res.ok;
+}
+
+async function notifyRestockAlerts(fresh: Array<{ region: string; skins: number }>) {
+  if (!process.env.DISCORD_BOT_TOKEN) return;
+  // How many new accounts per region + skin range.
+  const counts = new Map<string, number>();
+  for (const f of fresh) {
+    const k = `${f.region}|${bracketOf(f.skins).name}`;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const regions = [...new Set(fresh.map((f) => f.region))];
+  const { data: alerts, error } = await db
+    .from("restock_alerts")
+    .select("id, user_id, region, bracket, last_notified_at")
+    .eq("active", true)
+    .in("region", regions);
+  if (error || !alerts?.length) return;
+
+  const cutoff = Date.now() - ALERT_COOLDOWN_MS;
+  const due = alerts.filter(
+    (a) => counts.has(`${a.region}|${a.bracket}`) && (!a.last_notified_at || new Date(a.last_notified_at as string).getTime() < cutoff)
+  );
+  if (!due.length) return;
+
+  const userIds = [...new Set(due.map((a) => a.user_id as string))].slice(0, 100);
+  const [{ data: users }, { data: subs }] = await Promise.all([
+    db.from("users").select("id, discord_id").in("id", userIds),
+    db.from("subscriptions").select("user_id, tier").in("user_id", userIds).in("status", ["active", "grace"]),
+  ]);
+  const discordOf = new Map((users ?? []).map((u) => [u.id as string, u.discord_id as string]));
+  const early = new Set((subs ?? []).filter((s) => s.tier === "premium" || s.tier === "ultra").map((s) => s.user_id as string));
+  const openAt = Math.floor((Date.now() + EARLY_ACCESS_MS) / 1000);
+
+  let sent = 0;
+  for (const uid of userIds) {
+    const did = discordOf.get(uid);
+    if (!did) continue;
+    const mine = due.filter((a) => a.user_id === uid);
+    const lines = mine.map((a) => {
+      const b = BRACKETS.find((x) => x.name === a.bracket);
+      const n = counts.get(`${a.region}|${a.bracket}`) ?? 0;
+      return `**${b?.label ?? a.bracket}** · ${REGION_NAME[a.region as string] ?? a.region} — **${n}** new`;
+    });
+    const isEarly = early.has(uid);
+    const ok = await sendDm(did, {
+      embeds: [{
+        title: "🔔 Restock alert — your accounts just dropped",
+        color: 0xff4655,
+        description: lines.join("\n"),
+        fields: [
+          isEarly
+            ? { name: "💎 Early access", value: "You can buy these **right now**.", inline: false }
+            : { name: "When can I buy?", value: `Premium & Ultra get them first — they open for you <t:${openAt}:R> (<t:${openAt}:t>).`, inline: false },
+        ],
+        footer: { text: "Val Unlocked · manage alerts in the 🔔 Alerts tab" },
+        timestamp: new Date().toISOString(),
+      }],
+      components: [{
+        type: 1,
+        components: [
+          { type: 2, style: 5, label: "Open the shop", url: SITE_URL },
+          ...(isEarly ? [] : [{ type: 2, style: 5, label: "Get early access", url: `${SITE_URL}/pricing` }]),
+        ],
+      }],
+    }).catch(() => false);
+    if (ok) {
+      sent++;
+      await db.from("restock_alerts").update({ last_notified_at: new Date().toISOString() }).in("id", mine.map((a) => a.id as string));
+    }
+    await sleep(300); // stay well under Discord's DM rate limits
+  }
+  if (sent) console.log(`[watcher] restock alerts: ${sent} DM${sent === 1 ? "" : "s"}`);
+}
 
 const RESTOCK_CHANNEL_ID = process.env.RESTOCK_CHANNEL_ID ?? "1520260513735639182";
 const RESTOCK_MIN = Math.max(1, parseInt(process.env.RESTOCK_MIN ?? "25", 10) || 25);

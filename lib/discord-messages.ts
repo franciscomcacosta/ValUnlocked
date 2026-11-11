@@ -428,3 +428,50 @@ export function referralWelcomeMessage(o: { friendCents: number }): DiscordMessa
 export function staffMessage(o: { text: string }): DiscordMessage {
   return card({ title: "✉️ Message from Val Unlocked", color: COLOR.brand, description: o.text });
 }
+
+// ─── reminders & vouches ─────────────────────────────────────────────
+
+/** Unpaid checkout: the account is still held for them. */
+export function unpaidReminderMessage(o: { orderId: string; itemName: string; amountCents: number; expiresAt: Date; payUrl: string | null }): DiscordMessage {
+  return card({
+    title: "⏳ Your account is still reserved",
+    color: COLOR.warn,
+    description: `You started buying **${o.itemName}** but haven't paid yet. We're holding it for you — finish paying before it's released.`,
+    fields: [
+      { name: "To pay", value: `**${eur(o.amountCents)}**`, inline: true },
+      { name: "Held until", value: `<t:${ts(o.expiresAt)}:t> (<t:${ts(o.expiresAt)}:R>)`, inline: true },
+    ],
+    orderId: o.orderId,
+    buttons: [...(o.payUrl ? [{ label: "Pay now", url: o.payUrl }] : []), openOrder(o.orderId)],
+  });
+}
+
+/** "How was it?" — 5 star buttons handled by the bot (bot/commands/vouch.ts). */
+export function vouchRequestMessage(o: { orderId: string; summary: string }): DiscordMessage {
+  const msg = card({
+    title: "⭐ How was your account?",
+    color: COLOR.gold,
+    description:
+      `**${o.summary}**\n\nTap a rating — it takes two seconds and really helps us. ` +
+      "Good ratings are shared in our #vouches channel.",
+    orderId: o.orderId,
+  });
+  msg.components = [
+    {
+      type: 1,
+      components: [1, 2, 3, 4, 5].map((n) => ({
+        type: 2,
+        style: n >= 4 ? 3 : 2, // green for 4–5, grey otherwise
+        label: "⭐".repeat(n),
+        custom_id: `vouch:${o.orderId}:${n}`,
+      })),
+    },
+  ];
+  return msg;
+}
+
+/** Short account summary for vouches / reminders: "Europe · 14 skins". */
+export function accountSummary(region: string | null | undefined, skins: number | null | undefined, fallback = "Your account"): string {
+  if (!region) return fallback;
+  return `${REGION[region.toUpperCase()] ?? region}${skins != null ? ` · ${skins} skins` : ""}`;
+}

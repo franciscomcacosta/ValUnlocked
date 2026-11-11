@@ -52,6 +52,7 @@ export function WelcomeGift({ active }: { active: boolean }) {
           d.error === "out_of_stock" ? `That region just ran out of ${st.gift.label} accounts. Pick another one.`
           : d.error === "already_claimed" ? "You've already claimed your free account."
           : d.error === "not_eligible" ? "This free account isn't available on your account."
+          : r.status === 503 && typeof d.error === "string" ? d.error
           : "Something went wrong. Try again in a minute."
         );
       }

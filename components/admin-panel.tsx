@@ -125,6 +125,13 @@ type Dash = {
   stock: { total: number; byRegion: Record<string, number>; lastSyncAt: string | null };
   attention: { openClaims: number; stuckOrders: number };
   qvspBalance: { cents: number; currency: string } | null;
+  profit?: { day: number; week: number; month: number; all: number };
+  giftCostMonthCents?: number;
+  refundedLossMonthCents?: number;
+  membershipMonthCents?: number;
+  margins?: Array<{ name: string; label: string; sold: number; revenue: number; cost: number; profit: number }>;
+  ratings?: { count: number; avg: number | null; monthCount: number; monthAvg: number | null };
+  salesPause?: { paused: boolean; by?: string; reason?: string; since?: string };
 };
 
 function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
@@ -133,6 +140,28 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: Re
       <span className="lbl">{label}</span>
       <span className="h num" style={{ fontSize: "26px" }}>{value}</span>
       {sub && <span className="mut" style={{ fontSize: "12px" }}>{sub}</span>}
+    </Card>
+  );
+}
+
+function SalesSwitch({ pause, onChanged }: { pause: { paused: boolean; by?: string; reason?: string; since?: string }; onChanged: () => void }) {
+  const act = useAction();
+  return (
+    <Card style={{ flexDirection: "row", alignItems: "center", gap: "12px", flexWrap: "wrap", background: pause.paused ? "#ffe4e6" : undefined }}>
+      <span className={`pill ${pause.paused ? "r" : "g"}`}>{pause.paused ? "Sales paused" : "Sales open"}</span>
+      <span className="mut" style={{ flex: 1, fontSize: "13px" }}>
+        {pause.paused
+          ? `${pause.by === "auto" ? "Paused automatically" : "Paused by staff"}${pause.reason ? ` — ${pause.reason}` : ""}${pause.since ? ` · ${ago(pause.since)}` : ""}`
+          : "Buyers can purchase. Sales pause automatically if the qvsp balance can't cover an account."}
+      </span>
+      <button
+        className={`btn ${pause.paused ? "btn-dark" : "btn-red"} cs btn-sm`}
+        disabled={act.busy}
+        onClick={() => act.run("/api/admin/flags", { paused: !pause.paused }, onChanged)}
+      >
+        {pause.paused ? "Resume sales" : "Pause sales"}
+      </button>
+      <Note msg={act.msg} />
     </Card>
   );
 }
@@ -169,14 +198,32 @@ function Overview({ goClaims, goStuck }: { goClaims: () => void; goStuck: () => 
         </div>
       )}
 
+      <SalesSwitch pause={d.salesPause ?? { paused: false }} onChanged={load} />
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: "10px" }}>
         <Stat label="Revenue 24h" value={eur(d.revenue.day)} sub={`7d ${eur(d.revenue.week)}`} />
+        {d.profit && (
+          <Stat
+            label="Profit 24h"
+            value={<span style={{ color: d.profit.day < 0 ? "var(--accent-rose)" : undefined }}>{eur(d.profit.day)}</span>}
+            sub={`7d ${eur(d.profit.week)} · 30d ${eur(d.profit.month)}`}
+          />
+        )}
+        {d.profit && <Stat label="Profit all time" value={eur(d.profit.all)} sub="Paid by buyers − qvsp cost" />}
+        {d.membershipMonthCents !== undefined && <Stat label="Memberships 30d" value={eur(d.membershipMonthCents)} sub="Plan payments (pure profit)" />}
         <Stat label="Revenue 30d" value={eur(d.revenue.month)} sub={`All time ${eur(d.revenue.all)}`} />
         <Stat label="Top-ups 30d" value={eur(d.topupsMonthCents)} sub="Credit bought with crypto" />
         <Stat label="Orders 24h" value={d.orders.day} sub={`${d.orders.fulfilled} delivered · ${d.orders.total} total`} />
         <Stat label="Members" value={d.subs.total} sub={`Std ${d.subs.tiers.standard ?? 0} · Prem ${d.subs.tiers.premium ?? 0} · Ultra ${d.subs.tiers.ultra ?? 0}`} />
         <Stat label="Users" value={d.users.total} sub={`+${d.users.newWeek} this week`} />
         <Stat label="Credit owed" value={eur(d.users.creditOutstandingCents)} sub="Sum of all balances" />
+        {d.ratings && (
+          <Stat
+            label="Rating"
+            value={d.ratings.avg != null ? `${d.ratings.avg.toFixed(1)} ⭐` : "—"}
+            sub={`${d.ratings.count} vouch${d.ratings.count === 1 ? "" : "es"}${d.ratings.monthAvg != null ? ` · 30d ${d.ratings.monthAvg.toFixed(1)}` : ""}`}
+          />
+        )}
         <Stat
           label="qvsp balance"
           value={d.qvspBalance ? `${(d.qvspBalance.cents / 100).toFixed(2)} ${d.qvspBalance.currency.toUpperCase()}` : "—"}
@@ -195,6 +242,51 @@ function Overview({ goClaims, goStuck }: { goClaims: () => void; goStuck: () => 
           ))}
         </div>
       </Card>
+
+      {d.margins && (
+        <Card>
+          <span className="h" style={{ fontSize: "20px" }}>Margins by skin range · last 30 days</span>
+          {d.margins.length === 0 ? (
+            <span className="mut">No sales in the last 30 days.</span>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th style={{ paddingLeft: "16px" }}>Range</th>
+                  <th style={{ textAlign: "right" }}>Sold</th>
+                  <th style={{ textAlign: "right" }}>Revenue</th>
+                  <th style={{ textAlign: "right" }}>qvsp cost</th>
+                  <th style={{ textAlign: "right" }}>Profit</th>
+                  <th style={{ textAlign: "right", paddingRight: "16px" }}>Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.margins.map((m) => {
+                  const margin = m.revenue ? Math.round((m.profit / m.revenue) * 100) : null;
+                  const bad = m.profit < 0;
+                  return (
+                    <tr key={m.name}>
+                      <td style={{ paddingLeft: "16px", fontWeight: 600 }}>{m.label}</td>
+                      <td className="num" style={{ textAlign: "right" }}>{m.sold}</td>
+                      <td className="num" style={{ textAlign: "right" }}>{eur(m.revenue)}</td>
+                      <td className="num mut" style={{ textAlign: "right" }}>{eur(m.cost)}</td>
+                      <td className="num" style={{ textAlign: "right", fontWeight: 600, color: bad ? "var(--accent-rose)" : "var(--accent-success)" }}>{eur(m.profit)}</td>
+                      <td style={{ textAlign: "right", paddingRight: "16px" }}>
+                        {margin == null ? "—" : <span className={`pill ${margin < 0 ? "r" : margin < 20 ? "a" : "g"}`}>{margin}%</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          <span className="mut" style={{ fontSize: "12px" }}>
+            Refunded orders count as revenue €0 (the account was still paid for)
+            {d.refundedLossMonthCents ? ` — ${eur(d.refundedLossMonthCents)} lost to refunds this month` : ""}.
+            {d.giftCostMonthCents ? ` Free gift accounts cost ${eur(d.giftCostMonthCents)} this month (not in the table).` : ""}
+          </span>
+        </Card>
+      )}
 
       <Card>
         <span className="h" style={{ fontSize: "20px" }}>Orders by status</span>
@@ -224,6 +316,7 @@ type UserDetail = {
   ledger: Array<{ id: number; delta_cents: number; reason: string; order_id: string | null; created_at: string }>;
   claims: Array<{ id: string; order_id: string; reason: string; status: string; forward_error: string | null; created_at: string }>;
   referral?: { code: string | null; invited: number; referredBy: { id: string; name: string } | null; rewarded: boolean };
+  claimRate?: { claims: number; orders: number; flagged: boolean } | null;
 };
 
 function Users() {
@@ -327,6 +420,17 @@ function UserProfile({ id, back }: { id: string; back: () => void }) {
         <Stat label="Spent" value={eur(d.spentCents)} sub="Delivered orders" />
         <Stat label="Orders" value={d.orders.length} sub={`${d.orders.filter((o) => o.status === "fulfilled").length} delivered`} />
         <Stat label="Joined" value={new Date(u.created_at).toLocaleDateString("en-GB")} />
+        {d.claimRate && (
+          <Stat
+            label="Claims"
+            value={<span style={{ color: d.claimRate.flagged ? "var(--accent-rose)" : undefined }}>{d.claimRate.claims}</span>}
+            sub={
+              d.claimRate.flagged
+                ? <span style={{ color: "var(--accent-rose)" }}>⚠️ High claim rate — {d.claimRate.claims} on {d.claimRate.orders} orders</span>
+                : `on ${d.claimRate.orders} delivered order${d.claimRate.orders === 1 ? "" : "s"}`
+            }
+          />
+        )}
         <Stat
           label="Referrals"
           value={d.referral?.invited ?? 0}
@@ -546,6 +650,7 @@ type ClaimRow = {
   id: string; order_id: string; reason_label: string; status: string; qvsp_ticket_id: string | null; qvsp_status: string | null;
   forward_error: string | null; outcome_note: string | null; refund_cents: number; bonus_cents: number;
   video_url: string | null; created_at: string; users: { discord_id: string; discord_username: string | null } | null;
+  buyer_stats?: { claims: number; orders: number; flagged: boolean } | null;
 };
 
 function Claims() {
@@ -585,6 +690,14 @@ function ClaimCard({ c, onChanged }: { c: ClaimRow; onChanged: () => void }) {
         <a className="mono" href={`/orders/${c.order_id}`} style={{ color: "inherit", fontWeight: 600 }}>{ref(c.order_id)}</a>
         <span>{c.users?.discord_username ?? c.users?.discord_id ?? "—"}</span>
         <Pill s={c.status} />
+        {c.buyer_stats && (
+          <span
+            className={`pill ${c.buyer_stats.flagged ? "r" : "x"}`}
+            title="Claims this buyer has filed vs. their delivered orders"
+          >
+            {c.buyer_stats.flagged ? "⚠️ " : ""}{c.buyer_stats.claims} claim{c.buyer_stats.claims === 1 ? "" : "s"} / {c.buyer_stats.orders} order{c.buyer_stats.orders === 1 ? "" : "s"}
+          </span>
+        )}
         {c.qvsp_ticket_id && <span className="pill b">qvsp #{c.qvsp_ticket_id}{c.qvsp_status ? ` · ${c.qvsp_status}` : ""}</span>}
         <span className="mut" style={{ marginLeft: "auto", fontSize: "12px" }}>{when(c.created_at)}</span>
       </div>

@@ -12,6 +12,7 @@ export const maxDuration = 60;
 
 import { db } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/session";
+import { claimRates } from "@/lib/admin";
 import {
   CLAIM_REASONS,
   LEGACY_CLAIM_REASONS,
@@ -37,13 +38,19 @@ export async function GET(req: Request) {
   const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
+  const rates = await claimRates((data ?? []).map((c) => c.user_id as string)).catch(() => new Map());
   const claims = await Promise.all(
     (data ?? []).map(async (c) => {
       const video = c.video_path
         ? (await db.storage.from(VIDEO_BUCKET).createSignedUrl(c.video_path as string, 60 * 60 * 24 * 7)).data?.signedUrl ?? null
         : null;
       const r = c.reason as string;
-      return { ...c, reason_label: CLAIM_REASONS[r] ?? LEGACY_CLAIM_REASONS[r] ?? r, video_url: video };
+      return {
+        ...c,
+        reason_label: CLAIM_REASONS[r] ?? LEGACY_CLAIM_REASONS[r] ?? r,
+        video_url: video,
+        buyer_stats: rates.get(c.user_id as string) ?? null,
+      };
     })
   );
   return Response.json({ ok: true, claims }, { headers: { "cache-control": "no-store" } });

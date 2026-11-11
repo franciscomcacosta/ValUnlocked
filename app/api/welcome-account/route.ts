@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 
 import { sessionFromRequest } from "@/lib/session";
 import { allGifts, giftStock, claimGift, GIFTS, type GiftKind } from "@/lib/welcome-account";
+import { getSalesPause, PAUSED_MESSAGE } from "@/lib/shop-flags";
 
 export async function GET(req: Request) {
   const s = sessionFromRequest(req);
@@ -22,6 +23,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const s = sessionFromRequest(req);
   if (!s) return Response.json({ error: "login_required" }, { status: 401 });
+  if ((await getSalesPause()).paused) {
+    return Response.json({ ok: false, error: PAUSED_MESSAGE }, { status: 503 });
+  }
   const body = (await req.json().catch(() => ({}))) as { kind?: string; region?: string };
   const kind = (body.kind && body.kind in GIFTS ? body.kind : "standard_welcome") as GiftKind;
   const r = await claimGift(s.uid, kind, body.region ?? "");

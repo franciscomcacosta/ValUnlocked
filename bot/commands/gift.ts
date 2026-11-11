@@ -14,6 +14,7 @@ import { setTierRole, notifyDiscordUser, logToStaff } from "../../lib/discord";
 import { tierLabel, type SubTier } from "../../lib/pricing";
 import { isAdmin, ensureUser, applyPlan } from "./grant";
 import { BASE_URL } from "../base-url";
+import { planGrantedMessage } from "../../lib/discord-messages";
 
 const GIFT_CHANNEL_ID = process.env.GIFT_CHANNEL_ID ?? "1524132175530688632";
 const TIER_COLOR: Record<SubTier, number> = { standard: 0x9aa5b1, premium: 0xd1548d, ultra: 0xfad663 };
@@ -77,11 +78,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     announced = `⚠️ couldn't post in #general: ${(e as Error).message}`;
   }
 
-  await notifyDiscordUser(
-    target.id,
-    `🎁 **${interaction.user.username}** gifted you **${tierLabel(tier)}** on Val Unlocked — active until <t:${ts}:D>.\n` +
-      `Your discount and perks are live now: ${BASE_URL}`
-  ).catch(() => {});
+  await notifyDiscordUser(target.id, planGrantedMessage({ tier, end, giftedBy: interaction.user.username })).catch(() => {});
   await logToStaff(`🎁 ${interaction.user.username} gifted **${tierLabel(tier)}** (${days}d) to <@${target.id}>`).catch(() => {});
 
   await interaction.editReply(`Gifted **${tierLabel(tier)}** to <@${target.id}> until <t:${ts}:D> · ${roleNote} · ${announced}`);

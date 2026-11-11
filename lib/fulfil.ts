@@ -10,6 +10,7 @@ import { SKIN_BRACKETS } from "./pricing";
 import { skinVariants } from "./skin-names";
 import { logToStaff } from "./discord";
 import { rewardReferral } from "./referrals";
+import { accountReadyMessage, orderReadyMessage, deliveryDelayedMessage, giftSoldOutMessage, soldOutRefundMessage } from "./discord-messages";
 
 export async function fulfilOrder(orderId: string): Promise<boolean> {
   const delivered = await deliverOrder(orderId);
@@ -53,22 +54,19 @@ async function deliverOrder(orderId: string): Promise<boolean> {
         .select("login_enc, password_enc")
         .eq("id", order.inventory_id)
         .maybeSingle();
-      let credsBlock = "";
+      let login: string | null = null;
+      let password: string | null = null;
       if (inv?.login_enc && inv?.password_enc) {
         try {
-          credsBlock =
-            `\n**Login:** \`${decrypt(inv.login_enc)}\`\n` +
-            `**Password:** \`${decrypt(inv.password_enc)}\`\n`;
+          login = decrypt(inv.login_enc);
+          password = decrypt(inv.password_enc);
         } catch (e) {
           console.error("[fulfil] decrypt failed", e);
         }
       }
       await notifyDiscordUser(
         user.discord_id,
-        `✅ Your order for **${product?.name ?? "your account"}** is ready.` +
-          credsBlock +
-          `\nFull details (including recovery email): ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
-          `Change the account and email passwords on first login.`
+        orderReadyMessage({ orderId, productName: product?.name ?? "Your account", login, password })
       ).catch((e) => console.error("[fulfil] DM failed", e));
     }
     return true;
@@ -117,10 +115,7 @@ async function deliverOrder(orderId: string): Promise<boolean> {
         await db.from("orders").update({ status: "paid" }).eq("id", orderId);
         await logToStaff(`⚠️ Order ${orderId}: qvsp buy failed (${describeErr(e)}). Needs a manual retry or refund.`);
         if (user?.discord_id) {
-          await notifyDiscordUser(
-            user.discord_id,
-            `⚠️ Your payment was received but we hit a snag delivering your account. Staff will sort it out in a few minutes.`
-          ).catch(() => {});
+          await notifyDiscordUser(user.discord_id, deliveryDelayedMessage({ orderId })).catch(() => {});
         }
         return false;
       }
@@ -252,30 +247,19 @@ async function deliverOrder(orderId: string): Promise<boolean> {
     //            (we already logged in successfully, no need to re-test)
     //  - other → login + password now, email arrives in a second DM from
     //            the async /extract callback, plus the 10-min test window
-    if (verifyVerdict === "ok" && verifiedEmail) {
-      await notifyDiscordUser(
-        user.discord_id,
-        `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n` +
-          `✔️ We tested the login ourselves and it works.\n\n` +
-          `**Login:** \`${creds.login}\`\n` +
-          `**Password:** \`${creds.password}\`\n` +
-          `**Recovery email:** \`${verifiedEmail}\`\n\n` +
-          `Full details: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
-          `Change the account and email passwords on first login.`
-      ).catch((e) => console.error("[fulfil] DM failed", e));
-    } else {
-      await notifyDiscordUser(
-        user.discord_id,
-        `✅ Your Valorant account is ready — **${row.region}**, **${row.skin_count} skins**, peak **${row.peak ?? "N/A"}**.\n\n` +
-          `**Login:** \`${creds.login}\`\n` +
-          `**Password:** \`${creds.password}\`\n\n` +
-          `⏱️ **Test it now — you have 10 minutes.** Log in, and if anything's wrong (wrong password, banned, asks for a code…) ` +
-          `press **"No, there's a problem"** on the order page to get a replacement or your money back.\n` +
-          `⏳ Pulling your recovery email now — I'll DM it to you in about a minute.\n` +
-          `Full details: ${process.env.PUBLIC_BASE_URL}/orders/${orderId}\n` +
-          `Change the account and email passwords on first login.`
-      ).catch((e) => console.error("[fulfil] DM failed", e));
-    }
+    await notifyDiscordUser(
+      user.discord_id,
+      accountReadyMessage({
+        orderId,
+        region: String(row.region),
+        skins: (row.skin_count as number) ?? 0,
+        peak: (row.peak as string | null) ?? null,
+        login: creds.login,
+        password: creds.password,
+        email: verifiedEmail,
+        verified: verifyVerdict === "ok" && !!verifiedEmail,
+      })
+    ).catch((e) => console.error("[fulfil] DM failed", e));
   }
 
   // Dispatch the async email extractor only when verify didn't already
@@ -506,20 +490,16 @@ async function refundSoldOut(orderId: string, userId: string, discordId: string 
     // Free gift: the order is now "refunded", which re-opens the gift.
     await logToStaff(`🎁 Order ${orderId}: free gift sold out mid-delivery — gift re-opened for the buyer.`);
     if (discordId) {
-      await notifyDiscordUser(
-        discordId,
-        `Sorry — that free **${itemName}** account sold out the moment it was being delivered. ` +
-          `Your free account is still yours: pick a region and claim it again here: ${process.env.PUBLIC_BASE_URL}/?claim=gift`
-      ).catch(() => {});
+      await notifyDiscordUser(discordId, giftSoldOutMessage({ itemName })).catch(() => {});
     }
     return;
   }
   await logToStaff(`💸 Order ${orderId}: sold out on qvsp with no equivalent — refunded €${(paid / 100).toFixed(2)} to credit.`);
   if (discordId) {
+    const { data: bal } = await db.from("users").select("credit_cents").eq("id", userId).maybeSingle();
     await notifyDiscordUser(
       discordId,
-      `Sorry — the last **${itemName}** account sold out the moment you paid, and there was no matching one left. ` +
-        `We've refunded the full **€${(paid / 100).toFixed(2)}** to your Val Unlocked credit — it's ready to spend now.`
+      soldOutRefundMessage({ orderId, itemName, refundCents: paid, balanceCents: (bal?.credit_cents as number | undefined) ?? null })
     ).catch(() => {});
   }
 }

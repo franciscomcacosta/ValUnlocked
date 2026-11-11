@@ -16,6 +16,8 @@ import { db } from "../../lib/supabase";
 import { logToStaff } from "../../lib/discord";
 import { isAdmin, ensureUser } from "./grant";
 import { BASE_URL } from "../base-url";
+import { notifyDiscordUser } from "../../lib/discord";
+import { creditChangedMessage } from "../../lib/discord-messages";
 
 const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
 
@@ -77,15 +79,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const dm = interaction.options.getBoolean("dm") ?? delta > 0;
   let dmNote = "";
   if (dm) {
-    const ok = await interaction.client.users
-      .send(
-        target.id,
-        delta > 0
-          ? `💳 **${eur(delta)}** store credit was added to your Val Unlocked account${reason ? ` (${reason})` : ""}.\n` +
-              `Your balance is now **${eur(now)}** — spend it on any account: ${BASE_URL}`
-          : `💳 **${eur(-delta)}** was removed from your Val Unlocked credit${reason ? ` (${reason})` : ""}. Your balance is now **${eur(now)}**.`
-      )
-      .then(() => true, () => false);
+    const ok = await notifyDiscordUser(target.id, creditChangedMessage({ deltaCents: delta, balanceCents: now, reason })).then(
+      () => true,
+      () => false
+    );
     dmNote = ok ? " · DM sent" : " · couldn't DM them (DMs closed)";
   }
 

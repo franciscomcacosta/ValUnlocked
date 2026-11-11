@@ -14,6 +14,7 @@
 import { db } from "@/lib/supabase";
 import { encrypt, decrypt } from "@/lib/crypto";
 import { notifyDiscordUser, logToStaff } from "@/lib/discord";
+import { emailReadyMessage, emailDelayedMessage } from "@/lib/discord-messages";
 
 export const runtime = "nodejs";
 
@@ -41,7 +42,7 @@ export async function POST(req: Request) {
   // Success path — encrypt and store, then DM the buyer with the email
   // inline plus a reminder of which login it's for.
   if (body.ok && body.email) {
-    let loginHint = "";
+    let login: string | null = null;
     if (order.inventory_id) {
       await db
         .from("inventory")
@@ -53,15 +54,13 @@ export async function POST(req: Request) {
         .eq("id", order.inventory_id)
         .maybeSingle();
       if (inv?.login_enc) {
-        try { loginHint = `\n(for login \`${decrypt(inv.login_enc)}\`)`; } catch {}
+        try { login = decrypt(inv.login_enc); } catch {}
       }
     }
     if (user?.discord_id) {
       await notifyDiscordUser(
         user.discord_id,
-        `✉️ Your recovery **email** is ready:${loginHint}\n\n` +
-          `**Email:** \`${body.email}\`\n\n` +
-          `Full details: ${process.env.PUBLIC_BASE_URL}/orders/${order.id}`
+        emailReadyMessage({ orderId: order.id as string, email: body.email, login })
       ).catch((e) => console.error("[worker-cb] DM failed", e));
     }
     return Response.json({ ok: true });
@@ -78,11 +77,9 @@ export async function POST(req: Request) {
   ).catch((e) => console.error("[worker-cb] staff log failed", e));
 
   if (user?.discord_id) {
-    await notifyDiscordUser(
-      user.discord_id,
-      `⚠️ We couldn't auto-pull your recovery email this time. Staff have been pinged and will drop it on your order page shortly.\n` +
-        `Your login + password are already live — go ahead and use them. Order: ${process.env.PUBLIC_BASE_URL}/orders/${order.id}`
-    ).catch((e) => console.error("[worker-cb] fail DM failed", e));
+    await notifyDiscordUser(user.discord_id, emailDelayedMessage({ orderId: order.id as string })).catch((e) =>
+      console.error("[worker-cb] fail DM failed", e)
+    );
   }
 
   return Response.json({ ok: false, reason: body.reason });

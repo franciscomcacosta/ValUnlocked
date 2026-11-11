@@ -14,6 +14,8 @@ import { encrypt, decrypt } from "./crypto";
 import { notifyDiscordUser, logToStaff } from "./discord";
 import { getOrders } from "./qvsp";
 import { openTicket, uploadProof, getTicket, qvspCategory, type TicketView } from "./qvsp-replace";
+import type { DiscordMessage } from "./discord";
+import { replacementReadyMessage, claimRefundMessage, giftReissuedMessage, claimDeniedMessage } from "./discord-messages";
 
 export const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 export const CLAIM_SUBMIT_GRACE_MS = 10 * 60 * 1000;   // upload may finish after the window
@@ -84,12 +86,14 @@ export async function resolveQvspOrderId(orderId: string): Promise<string | null
   return null;
 }
 
+const reasonLabelOf = (c: ClaimRow) => CLAIM_REASONS[c.reason] ?? LEGACY_CLAIM_REASONS[c.reason] ?? c.reason;
+
 async function userDiscordId(userId: string): Promise<string | null> {
   const { data } = await db.from("users").select("discord_id").eq("id", userId).maybeSingle();
   return (data?.discord_id as string | undefined) ?? null;
 }
 
-async function dm(userId: string, text: string) {
+async function dm(userId: string, text: string | DiscordMessage) {
   const did = await userDiscordId(userId);
   if (did) await notifyDiscordUser(did, text).catch((e) => console.error("[claims] DM failed", e));
 }
@@ -198,9 +202,14 @@ async function deliverReplacement(c: ClaimRow, t: TicketView): Promise<boolean> 
   if (!ok) return false;
   await dm(
     c.user_id,
-    `✅ Your replacement account is ready. We've swapped it into your order.\n` +
-      `View the new credentials: ${base()}/orders/${c.order_id}\n` +
-      `Change the account and email passwords on first login.`
+    replacementReadyMessage({
+      orderId: c.order_id,
+      login: creds.login,
+      password: creds.password,
+      email: creds.email || null,
+      emailPassword: creds.email_password || null,
+      reasonLabel: reasonLabelOf(c),
+    })
   );
   await logToStaff(`🔁 Claim ${c.id}: replacement delivered (ticket ${t.id}).`);
   return true;
@@ -218,11 +227,7 @@ async function reissueGift(c: ClaimRow, note: string): Promise<boolean> {
     .select("id");
   if (!upd?.length) return false;
   await db.from("orders").update({ status: "refunded_credit" }).eq("id", c.order_id);
-  await dm(
-    c.user_id,
-    `💛 Sorry that free account didn't work. **You get a brand-new free account instead** — ` +
-      `pick your region and claim it here: ${base()}/?claim=gift`
-  );
+  await dm(c.user_id, giftReissuedMessage({ orderId: c.order_id }));
   await logToStaff(`🎁 Claim ${c.id}: free gift account re-issued (order ${c.order_id}).`);
   return true;
 }
@@ -238,11 +243,17 @@ async function refundClaim(c: ClaimRow, note: string): Promise<boolean> {
   if (c.refund_cents === 0 && (await isGiftOrder(c.order_id))) return reissueGift(c, note);
   const { data: credited } = await db.rpc("apply_claim_refund", { p_claim: c.id, p_note: note });
   if (!credited) return false;
+  const { data: bal } = await db.from("users").select("credit_cents").eq("id", c.user_id).maybeSingle();
   await dm(
     c.user_id,
-    `💛 Sorry about that order. We've refunded **${euro(c.refund_cents)}** to your Val Unlocked credit, ` +
-      `plus a **${euro(c.bonus_cents)} apology bonus** — **${euro(c.refund_cents + c.bonus_cents)}** in total.\n` +
-      `It's ready to spend now: ${base()}`
+    claimRefundMessage({
+      orderId: c.order_id,
+      refundCents: c.refund_cents,
+      bonusCents: c.bonus_cents,
+      balanceCents: (bal?.credit_cents as number | undefined) ?? null,
+      reasonLabel: reasonLabelOf(c),
+      note,
+    })
   );
   await logToStaff(`💸 Claim ${c.id}: refunded ${euro(c.refund_cents)} + ${euro(c.bonus_cents)} bonus to credit.`);
   return true;
@@ -287,11 +298,7 @@ export async function syncClaim(claimId: string): Promise<string> {
       .in("status", ["submitted", "under_review"])
       .select("id");
     if (upd?.length) {
-      await dm(
-        c.user_id,
-        `Your report for order ${c.order_id.slice(0, 8).toUpperCase()} was reviewed and not approved` +
-          `${t.note ? `: ${t.note}` : "."} If you think that's wrong, open a ticket in our Discord.`
-      );
+      await dm(c.user_id, claimDeniedMessage({ orderId: c.order_id, reasonLabel: reasonLabelOf(c), note: t.note }));
       await logToStaff(`⛔ Claim ${c.id}: denied by qvsp (ticket ${t.id}).`);
     }
     return "denied";
@@ -353,11 +360,7 @@ export async function adminResolveClaim(
     .in("status", ["submitted", "under_review"])
     .select("id");
   if (!upd?.length) return { ok: false, message: "Claim changed — reload and try again." };
-  await dm(
-    c.user_id,
-    `Your report for order ${c.order_id.slice(0, 8).toUpperCase()} was reviewed and not approved` +
-      `${note ? `: ${note}` : "."} If you think that's wrong, open a ticket in our Discord.`
-  );
+  await dm(c.user_id, claimDeniedMessage({ orderId: c.order_id, reasonLabel: reasonLabelOf(c), note: note || null }));
   await logToStaff(`⛔ Claim ${c.id}: denied by staff${note ? ` (${note})` : ""}.`);
   return { ok: true, message: "Claim denied and the buyer was told." };
 }

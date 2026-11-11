@@ -16,6 +16,7 @@ import { db } from "../../lib/supabase";
 import { setTierRole, clearTierRoles, notifyDiscordUser, logToStaff } from "../../lib/discord";
 import { SUB_GRACE_HOURS, tierLabel, type SubTier } from "../../lib/pricing";
 import { BASE_URL } from "../base-url";
+import { planGrantedMessage } from "../../lib/discord-messages";
 
 const TIERS: SubTier[] = ["standard", "premium", "ultra"];
 
@@ -139,11 +140,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   );
 
   if (dm) {
-    await notifyDiscordUser(
-      target.id,
-      `🎁 You've been given **${tierLabel(tier)}** on Val Unlocked until <t:${Math.floor(end.getTime() / 1000)}:D>.\n` +
-        `Your discount, early access and perks are live now: ${BASE_URL}`
-    ).catch(() => {});
+    await notifyDiscordUser(target.id, planGrantedMessage({ tier, end })).catch(() => {});
   }
   await logToStaff(
     `🛠️ ${interaction.user.username} granted **${tierLabel(tier)}** to <@${target.id}> until <t:${Math.floor(end.getTime() / 1000)}:D>`

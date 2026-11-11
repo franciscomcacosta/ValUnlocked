@@ -11,6 +11,7 @@ import { db } from "./supabase";
 import { createInvoice } from "./nowpayments";
 import { welcomeStatus } from "./welcome-account";
 import { notifyDiscordUser, setTierRole, clearTierRoles, logToStaff } from "./discord";
+import { subActiveMessage, welcomeAccountMessage, subGraceMessage, subEndedMessage, subReminderMessage } from "./discord-messages";
 import {
   SUB_PRICE_CENTS,
   SUB_PERIOD_DAYS,
@@ -265,19 +266,13 @@ export async function applyPaidSubInvoice(subInvoiceId: string): Promise<boolean
     );
     await notifyDiscordUser(
       user.discord_id,
-      `✅ Your **${tierLabel(inv.tier as SubTier)}** subscription is active until <t:${Math.floor(newPeriodEnd.getTime() / 1000)}:D>.\n` +
-        (creditCents > 0 ? `**${formatEur(creditCents)}** monthly store credit added — applied automatically on your next purchase.\n` : "") +
-        `New perks unlocked in the Discord.`
+      subActiveMessage({ tier: inv.tier as SubTier, end: newPeriodEnd, creditCents, renewed: inv.purpose !== "initial" })
     ).catch((e) => console.error("[subs] DM failed", e));
 
     if (inv.tier === "standard" && inv.purpose === "initial") {
       const ws = await welcomeStatus(sub.user_id).catch(() => null);
       if (ws?.state === "available") {
-        await notifyDiscordUser(
-          user.discord_id,
-          `🎁 **Your first Standard month comes with a FREE 26–50 skins account.**\n` +
-            `Pick your region and claim it here: ${process.env.PUBLIC_BASE_URL}/?claim=welcome`
-        ).catch(() => {});
+        await notifyDiscordUser(user.discord_id, welcomeAccountMessage()).catch(() => {});
       }
     }
   }
@@ -322,11 +317,9 @@ export async function enterGrace(subscriptionId: string): Promise<void> {
 
   if (user?.discord_id) {
     const graceEnd = new Date(sub.grace_until).getTime();
-    await notifyDiscordUser(
-      user.discord_id,
-      `⚠️ Your **${tierLabel(sub.tier)}** subscription expired but you're in a **48-hour grace period** (until <t:${Math.floor(graceEnd / 1000)}:R>).\n` +
-        `Renew now to keep your role: ${process.env.PUBLIC_BASE_URL}/account`
-    ).catch((e) => console.error("[subs] grace DM failed", e));
+    await notifyDiscordUser(user.discord_id, subGraceMessage({ tier: sub.tier as SubTier, graceEnd: new Date(graceEnd) })).catch((e) =>
+      console.error("[subs] grace DM failed", e)
+    );
   }
 }
 
@@ -350,10 +343,9 @@ export async function expireSubscription(subscriptionId: string): Promise<void> 
 
   if (user?.discord_id) {
     await clearTierRoles(user.discord_id).catch((e) => console.error("[subs] clear roles failed", e));
-    await notifyDiscordUser(
-      user.discord_id,
-      `❌ Your **${tierLabel(sub.tier)}** subscription has ended. Resubscribe any time: ${process.env.PUBLIC_BASE_URL}/account`
-    ).catch((e) => console.error("[subs] expire DM failed", e));
+    await notifyDiscordUser(user.discord_id, subEndedMessage({ tier: sub.tier as SubTier })).catch((e) =>
+      console.error("[subs] expire DM failed", e)
+    );
   }
 
   await logToStaff(`📤 Sub expired: ${tierLabel(sub.tier)} · user ${sub.user_id}`);
@@ -385,19 +377,10 @@ export async function sendRenewalReminder(
     return;
   }
 
-  const periodEnd = Math.floor(new Date(sub.period_end).getTime() / 1000);
-  const tone =
-    which === "7d"
-      ? `⏰ Your **${tierLabel(sub.tier)}** sub renews in 7 days`
-      : which === "3d"
-      ? `⏰ 3 days left on your **${tierLabel(sub.tier)}** sub`
-      : `⚠️ Tomorrow: your **${tierLabel(sub.tier)}** sub ends`;
-
   if (user?.discord_id) {
     await notifyDiscordUser(
       user.discord_id,
-      `${tone} (<t:${periodEnd}:R>).\n` +
-        `Keep your discount + perks — pay with crypto:\n${invRes.invoiceUrl}`
+      subReminderMessage({ tier: sub.tier as SubTier, which, end: new Date(sub.period_end), invoiceUrl: invRes.invoiceUrl })
     ).catch((e) => console.error(`[subs] reminder ${which} failed`, e));
   }
 

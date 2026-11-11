@@ -14,6 +14,7 @@ import { requireAdmin } from "@/lib/session";
 import { notifyDiscordUser, logToStaff } from "@/lib/discord";
 import { fulfilOrder } from "@/lib/fulfil";
 import { changeCredit, eur, paidCents } from "@/lib/admin";
+import { orderRefundedMessage } from "@/lib/discord-messages";
 
 const SELECT =
   "id, status, price_cents, credit_used_cents, charge_cents, pay_currency, created_at, paid_at, fulfilled_at, inventory_id, user_id, users(discord_id, discord_username), products(name)";
@@ -96,8 +97,7 @@ export async function POST(req: Request) {
       if (did && (b.dm ?? true)) {
         await notifyDiscordUser(
           did,
-          `💛 Order ${ref} was refunded: **${eur(cents)}** is back in your Val Unlocked credit` +
-            `${reason ? ` (${reason})` : ""}. Balance: **${eur(balance)}**.`
+          orderRefundedMessage({ orderId: order.id as string, refundCents: cents, balanceCents: balance, reason: reason || null })
         ).catch(() => {});
       }
       await logToStaff(`💸 ${admin} refunded ${ref} — ${eur(cents)} to credit${reason ? ` (${reason})` : ""}.`);

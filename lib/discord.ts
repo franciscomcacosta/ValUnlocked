@@ -9,7 +9,14 @@ function headers() {
   };
 }
 
-export async function notifyDiscordUser(discordId: string, content: string) {
+/** A message with embeds / buttons (see lib/discord-messages.ts). */
+export type DiscordMessage = {
+  content?: string;
+  embeds?: Array<Record<string, unknown>>;
+  components?: Array<Record<string, unknown>>;
+};
+
+export async function notifyDiscordUser(discordId: string, content: string | DiscordMessage) {
   const dm = await fetch(`${API}/users/@me/channels`, {
     method: "POST",
     headers: headers(),
@@ -20,13 +27,14 @@ export async function notifyDiscordUser(discordId: string, content: string) {
   await sendChannelMessage(id, content);
 }
 
-export async function sendChannelMessage(channelId: string, content: string) {
+export async function sendChannelMessage(channelId: string, content: string | DiscordMessage) {
+  const body = typeof content === "string" ? { content } : content;
   const res = await fetch(`${API}/channels/${channelId}/messages`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    body: JSON.stringify({ ...body, allowed_mentions: { parse: [] } }),
   });
-  if (!res.ok) throw new Error(`send message failed: ${res.status}`);
+  if (!res.ok) throw new Error(`send message failed: ${res.status} ${(await res.text().catch(() => "")).slice(0, 200)}`);
 }
 
 // Private staff channel for sales and payments that need attention.

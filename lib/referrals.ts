@@ -13,6 +13,7 @@
 import { randomInt } from "crypto";
 import { db } from "./supabase";
 import { notifyDiscordUser, logToStaff } from "./discord";
+import { referralJoinedMessage, referralRewardMessage, referralWelcomeMessage } from "./discord-messages";
 
 const num = (v: string | undefined, d: number) => {
   const n = parseInt(v ?? "", 10);
@@ -80,8 +81,7 @@ export async function attachReferrer(userId: string, rawCode: string | null | un
   const friend = linked[0];
   await notifyDiscordUser(
     referrer.discord_id as string,
-    `👋 **${friend.discord_username ?? "A friend"}** just joined Val Unlocked with your invite link. ` +
-      `When they make their first purchase you'll get **${eur(REFERRAL_REWARD_CENTS)}** credit.`
+    referralJoinedMessage({ friendName: (friend.discord_username as string | null) ?? "A friend", rewardCents: REFERRAL_REWARD_CENTS })
   ).catch(() => {});
   return true;
 }
@@ -111,15 +111,11 @@ export async function rewardReferral(orderId: string): Promise<void> {
   if (referrer?.discord_id && REFERRAL_REWARD_CENTS > 0) {
     await notifyDiscordUser(
       referrer.discord_id as string,
-      `🎉 **${friend?.discord_username ?? "Your friend"}** made their first purchase — ` +
-        `**${eur(REFERRAL_REWARD_CENTS)}** credit is now in your account. Keep inviting: ${base()}`
+      referralRewardMessage({ friendName: friend?.discord_username ?? "Your friend", rewardCents: REFERRAL_REWARD_CENTS })
     ).catch(() => {});
   }
   if (friend?.discord_id && REFERRAL_FRIEND_CENTS > 0) {
-    await notifyDiscordUser(
-      friend.discord_id,
-      `🎁 Thanks for joining through a friend's invite — **${eur(REFERRAL_FRIEND_CENTS)}** bonus credit was added to your account.`
-    ).catch(() => {});
+    await notifyDiscordUser(friend.discord_id, referralWelcomeMessage({ friendCents: REFERRAL_FRIEND_CENTS })).catch(() => {});
   }
   await logToStaff(
     `🤝 Referral paid: <@${referrer?.discord_id}> +${eur(REFERRAL_REWARD_CENTS)}, ` +

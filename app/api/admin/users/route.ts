@@ -14,6 +14,7 @@ import { requireAdmin } from "@/lib/session";
 import { notifyDiscordUser, logToStaff, setTierRole, clearTierRoles } from "@/lib/discord";
 import { tierLabel, type SubTier } from "@/lib/pricing";
 import { ADMIN_TIERS, applyPlan, changeCredit, eur, findUser, paidCents, removePlan } from "@/lib/admin";
+import { creditChangedMessage, planGrantedMessage, staffMessage } from "@/lib/discord-messages";
 
 const base = () => process.env.PUBLIC_BASE_URL ?? "https://valunlock.online";
 
@@ -142,14 +143,7 @@ export async function POST(req: Request) {
 
       const shouldDm = b.dm ?? delta > 0;
       if (shouldDm) {
-        await notifyDiscordUser(
-          did,
-          delta > 0
-            ? `💳 **${eur(delta)}** store credit was added to your Val Unlocked account${reason ? ` (${reason})` : ""}. ` +
-                `Balance: **${eur(balance)}**.\n${base()}`
-            : `💳 **${eur(-delta)}** store credit was removed from your Val Unlocked account${reason ? ` (${reason})` : ""}. ` +
-                `Balance: **${eur(balance)}**.`
-        ).catch(() => {});
+        await notifyDiscordUser(did, creditChangedMessage({ deltaCents: delta, balanceCents: balance, reason: reason || null })).catch(() => {});
       }
       await logToStaff(
         `🛠️ ${admin} ${delta > 0 ? "added" : "removed"} ${eur(Math.abs(delta))} credit ${delta > 0 ? "to" : "from"} <@${did}>` +
@@ -185,11 +179,7 @@ export async function POST(req: Request) {
       const roleNote = await setTierRole(did, tier).then(() => "", (e: Error) => ` Plan saved, but the Discord role failed: ${e.message}`);
       const ts = Math.floor(end.getTime() / 1000);
       if (shouldDm) {
-        await notifyDiscordUser(
-          did,
-          `🎁 You've been given **${tierLabel(tier)}** on Val Unlocked until <t:${ts}:D>.\n` +
-            `Your discount, early access and perks are live now: ${base()}`
-        ).catch(() => {});
+        await notifyDiscordUser(did, planGrantedMessage({ tier, end })).catch(() => {});
       }
       await logToStaff(`🛠️ ${admin} granted **${tierLabel(tier)}** to <@${did}> until <t:${ts}:D>`);
       return Response.json({
@@ -205,7 +195,7 @@ export async function POST(req: Request) {
       const message = (b.message ?? "").trim();
       if (!message) return Response.json({ error: "Write a message first." }, { status: 400 });
       if (message.length > 1800) return Response.json({ error: "Keep it under 1800 characters." }, { status: 400 });
-      await notifyDiscordUser(did, message);
+      await notifyDiscordUser(did, staffMessage({ text: message }));
       await logToStaff(`✉️ ${admin} DMed <@${did}>: ${message.slice(0, 300)}`);
       return Response.json({ ok: true, message: `Sent to ${who}.` });
     }

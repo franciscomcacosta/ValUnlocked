@@ -430,6 +430,22 @@ async function heartbeat() {
   }).catch(() => {});
 }
 
+// ─── liveness row (admin panel "watcher live" check) ───────────────────
+// Stock rows are only written when something changes, so on a quiet day
+// they can't tell "running" from "dead". This row is touched once a minute
+// no matter what. Needs migration 009 — silently skipped if it's missing.
+
+let lastBeat = 0;
+async function beat() {
+  if (Date.now() - lastBeat < 60_000) return;
+  lastBeat = Date.now();
+  const { error } = await db.from("service_heartbeats").upsert(
+    { name: "watcher", beat_at: new Date().toISOString(), info: { live: known.size, interval_ms: interval, errors: stats.errors } },
+    { onConflict: "name" }
+  );
+  if (error && !/service_heartbeats/.test(error.message)) console.warn("[watcher] heartbeat row failed", error.message);
+}
+
 // ─── main loop ─────────────────────────────────────────────────────────
 
 let stopping = false;
@@ -445,6 +461,7 @@ async function main() {
     try {
       await loadSkinTiers();
       await pass();
+      await beat();
       await heartbeat();
       await maybeAnnounceRestock();
     } catch (e) {

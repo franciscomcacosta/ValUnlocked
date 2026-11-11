@@ -20,7 +20,7 @@ export async function GET(req: Request) {
   const monthAgo = new Date(now - 30 * 86_400_000).toISOString();
 
   try {
-    const [orders, users, subs, stock, lastSync, openClaims, stuck, topups, qvsp] = await Promise.all([
+    const [orders, users, subs, stock, lastSync, openClaims, stuck, topups, qvsp, watcherBeat] = await Promise.all([
       pageAll<OrderRow>((a, b) =>
         db.from("orders").select("status, credit_used_cents, charge_cents, created_at, fulfilled_at").range(a, b)
       ),
@@ -43,7 +43,13 @@ export async function GET(req: Request) {
       db.from("orders").select("id", { count: "exact", head: true }).eq("status", "paid").is("inventory_id", null),
       db.from("topup_invoices").select("pay_cents, credited_at").not("credited_at", "is", null).gte("credited_at", monthAgo),
       getBalance().catch(() => null),
+      // Written by the watcher every minute (migration 009); errors → fall back to stock rows.
+      db.from("service_heartbeats").select("beat_at").eq("name", "watcher").maybeSingle(),
     ]);
+    const watcherSeenAt =
+      (watcherBeat.error ? null : (watcherBeat.data?.beat_at as string | undefined)) ??
+      (lastSync.data?.last_synced_at as string | undefined) ??
+      null;
 
     const fulfilled = orders.filter((o) => o.status === "fulfilled");
     const sumSince = (iso: string) =>
@@ -80,7 +86,7 @@ export async function GET(req: Request) {
           creditOutstandingCents: users.reduce((s, u) => s + (u.credit_cents ?? 0), 0),
         },
         subs: { total: (subs.data ?? []).length, tiers },
-        stock: { total: stock.length, byRegion: stockByRegion, lastSyncAt: (lastSync.data?.last_synced_at as string | undefined) ?? null },
+        stock: { total: stock.length, byRegion: stockByRegion, lastSyncAt: watcherSeenAt },
         attention: { openClaims: openClaims.count ?? 0, stuckOrders: stuck.count ?? 0 },
         qvspBalance: qvsp ? { cents: qvsp.cents, currency: qvsp.currency } : null,
       },

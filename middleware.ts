@@ -10,6 +10,7 @@
 //   /api/ipn              — NOWPayments webhook (no browser, no cookie)
 //   /api/webhooks/*       — qvsp webhook (checks its own ?token=)
 //   /api/cron/*           — external cron (uses CRON_SECRET bearer token)
+//   /api/worker/*         — Fly email worker callback (EXTRACTOR_CALLBACK_SECRET bearer)
 //   /api/public-stats     — kept public ONLY if used; harmless if gated too
 //
 // Static assets (/_next, favicon) bypass via the matcher below.
@@ -24,6 +25,7 @@ const PUBLIC_API_PATHS = [
   "/api/ipn",
   "/api/webhooks/",   // prefix — each webhook verifies its own secret
   "/api/cron/",       // prefix match — any /api/cron/* is cron-secret-gated internally
+  "/api/worker/",     // Fly email worker callback — checks EXTRACTOR_CALLBACK_SECRET itself
 ];
 
 export function middleware(req: NextRequest) {

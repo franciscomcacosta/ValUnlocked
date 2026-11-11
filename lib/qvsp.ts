@@ -12,7 +12,7 @@ if (!QVSP_KEY && process.env.NODE_ENV === "production") {
 }
 
 export type QvspKind = "skinned" | "ranked";
-export type QvspRegion = "eu" | "ap" | "kr" | "latam" | "br"; // NA has no stock
+export type QvspRegion = "eu" | "na" | "ap" | "kr" | "latam" | "br";
 
 export interface QvspStockItem {
   id: string;
@@ -123,7 +123,7 @@ export async function getStock(kind: QvspKind, region: QvspRegion): Promise<Qvsp
 
 export async function getAllStock(): Promise<QvspStockItem[]> {
   const kinds: QvspKind[] = ["skinned", "ranked"];
-  const regions: QvspRegion[] = ["eu", "ap", "kr", "latam", "br"];
+  const regions: QvspRegion[] = ["eu", "na", "ap", "kr", "latam", "br"];
   const results = await Promise.all(
     kinds.flatMap((k) => regions.map((r) => getStock(k, r).catch((e) => {
       console.error(`[qvsp] stock fetch ${k}/${r} failed`, e);

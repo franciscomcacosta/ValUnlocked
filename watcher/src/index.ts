@@ -33,7 +33,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const BASE_INTERVAL = Math.max(10_000, parseInt(process.env.INTERVAL_MS ?? "15000", 10) || 15_000);
 const MAX_INTERVAL = 120_000;
-const REGIONS = ["eu", "ap", "kr", "latam", "br"] as const;
+const REGIONS = ["eu", "na", "ap", "kr", "latam", "br"] as const;
 
 if (!QVSP_KEY || !SUPABASE_URL || !SERVICE_KEY) {
   console.error("[watcher] missing QVSP_API_KEY / SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");

@@ -109,6 +109,17 @@ export async function forwardClaimToQvsp(claimId: string): Promise<void> {
     const msg = `${step}: ${typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 400)}`;
     await db.from("replacement_claims").update({ forward_error: msg }).eq("id", claimId);
     if (c.forward_error === msg) return; // same failure as last try — don't spam staff
+    // qvsp only replaces an account once. This is final — retrying won't help,
+    // so tell staff plainly that a human has to refund or deny it.
+    if (/not_eligible/.test(msg)) {
+      await logToStaff(
+        `⚠️ Claim ${claimId} (order ${c.order_id}) — qvsp WON'T replace this account: it already had a replacement.\n` +
+          `Needs a manual decision: refund the buyer to credit, or deny. Not retrying.\n` +
+          `Reason: ${reasonLabel}${c.details ? ` — "${c.details}"` : ""}\n` +
+          (videoUrl ? `Video (7 days): ${videoUrl}` : "No video")
+      );
+      return;
+    }
     await logToStaff(
       `🧾 Claim ${claimId} (order ${c.order_id}) — couldn't forward to qvsp (${msg}).\n` +
         `Reason: ${reasonLabel}${c.details ? ` — "${c.details}"` : ""}\n` +
@@ -297,6 +308,7 @@ export async function syncOpenClaims(): Promise<Record<string, number>> {
     .eq("status", "submitted")
     .is("qvsp_ticket_id", null)
     .not("forward_error", "is", null)
+    .not("forward_error", "ilike", "%not_eligible%")   // final qvsp refusal — staff handles it
     .gte("created_at", new Date(Date.now() - 24 * 3_600_000).toISOString())
     .limit(20);
   for (const row of unsent ?? []) await forwardClaimToQvsp(row.id as string).catch(() => {});

@@ -1,11 +1,7 @@
-# Val Unlocked — qvsp stock watcher.
+# fly.toml app configuration file generated for valo-shop-watcher on 2026-11-09T16:03:46Z
 #
-# COST GUARD (target ≤ $5/month, expected ≈ $2):
-#   • exactly ONE machine, shared-cpu-1x, 256 MB — `fly scale count 1`
-#   • NO [http_service] / [[services]] → no public IPs, nothing to auto-scale
-#   • NO volumes
-#   • always running (it's a loop, not a web server) and restarted on crash
-# Don't add services, volumes or more machines without re-checking cost.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
 app = 'valo-shop-watcher'
 primary_region = 'cdg'

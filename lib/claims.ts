@@ -326,3 +326,38 @@ export async function syncOpenClaims(): Promise<Record<string, number>> {
   }
   return tally;
 }
+
+/** Staff decision on a claim (admin panel): refund to credit, or deny.
+ *  Used for claims qvsp won't handle (e.g. already replaced once). */
+export async function adminResolveClaim(
+  claimId: string,
+  action: "refund" | "deny",
+  note: string
+): Promise<{ ok: boolean; message: string }> {
+  const { data } = await db.from("replacement_claims").select("*").eq("id", claimId).single();
+  const c = data as ClaimRow | null;
+  if (!c) return { ok: false, message: "Claim not found." };
+  if (!["submitted", "under_review"].includes(c.status)) {
+    return { ok: false, message: `This claim is already ${c.status}.` };
+  }
+  if (action === "refund") {
+    const done = await refundClaim(c, note || "Refunded by staff");
+    return done
+      ? { ok: true, message: c.refund_cents === 0 ? "Free account re-issued." : `Refunded ${euro(c.refund_cents)} + ${euro(c.bonus_cents)} bonus.` }
+      : { ok: false, message: "Refund didn't go through — the claim may have just changed. Reload." };
+  }
+  const { data: upd } = await db
+    .from("replacement_claims")
+    .update({ status: "denied", resolved_at: new Date().toISOString(), outcome_note: note || "Denied by staff" })
+    .eq("id", c.id)
+    .in("status", ["submitted", "under_review"])
+    .select("id");
+  if (!upd?.length) return { ok: false, message: "Claim changed — reload and try again." };
+  await dm(
+    c.user_id,
+    `Your report for order ${c.order_id.slice(0, 8).toUpperCase()} was reviewed and not approved` +
+      `${note ? `: ${note}` : "."} If you think that's wrong, open a ticket in our Discord.`
+  );
+  await logToStaff(`⛔ Claim ${c.id}: denied by staff${note ? ` (${note})` : ""}.`);
+  return { ok: true, message: "Claim denied and the buyer was told." };
+}

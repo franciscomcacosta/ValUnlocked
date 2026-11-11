@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LockLogo } from "@/components/lock-logo";
 import { WelcomeGift } from "@/components/welcome-gift";
 import { ClaimOutcomeModal } from "@/components/claims";
+import { AdminPanel } from "@/components/admin-panel";
 import { useStockFeed, useStockVersion, DropToasts, type StockDrop } from "@/components/live-stock";
 import { TOPUP_TIERS, TOPUP_BONUS_PCT } from "@/lib/pricing";
 
@@ -187,7 +188,7 @@ export default function Page() {
         {tab === "purchases" && <PurchasesTab />}
         {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} onOrders={() => setTab("purchases")} />}
         {tab === "autobuy" && <AutobuyTab me={me} isUltra={isUltra} onSub={() => setTab("subscribe")} onTopup={() => setTopup({ open: true, returnId: null })} />}
-        {tab === "admin" && me.isAdmin && <AdminTab />}
+        {tab === "admin" && me.isAdmin && <AdminPanel tools={<AdminTab />} />}
       </main>
 
       <ClaimOutcomeModal onCredited={reloadMe} />
@@ -3438,7 +3439,8 @@ function TopupModal({
 }
 
 // ================================================================
-// Admin tab (minimal, same as before)
+// Admin → Tools section (webhook + stuck deliveries). The rest of the
+// admin panel lives in components/admin-panel.tsx.
 // ================================================================
 
 function AdminTab() {
@@ -3492,11 +3494,11 @@ function AdminTab() {
   }
 
   return (
-    <section className="pn cut" style={{ height: "100%", padding: "20px 24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+    <section style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       <div>
-        <span className="lbl">Admin</span>
+        <span className="lbl">Tools</span>
         <p className="mut" style={{ marginTop: "8px" }}>
-          Admin controls — manage credit grants, review orders, trigger inventory sync.
+          qvsp webhook and stuck-delivery retries.
         </p>
       </div>
       <div className="cs" style={{ maxWidth: "560px", padding: "14px 16px", background: "var(--vu-surface-alt)", display: "flex", flexDirection: "column", gap: "8px" }}>

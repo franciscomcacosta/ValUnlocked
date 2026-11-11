@@ -79,7 +79,7 @@ function useAction() {
 
 // ----- shell -----------------------------------------------------
 
-type Sub = "overview" | "users" | "orders" | "claims" | "tools";
+type Sub = "overview" | "users" | "orders" | "claims" | "referrals" | "tools";
 
 export function AdminPanel({ tools }: { tools: ReactNode }) {
   const [sub, setSub] = useState<Sub>("overview");
@@ -90,7 +90,7 @@ export function AdminPanel({ tools }: { tools: ReactNode }) {
       <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
         <span className="lbl" style={{ flex: 1 }}>Admin</span>
         <div className="seg" role="group" aria-label="Admin section">
-          {(["overview", "users", "orders", "claims", "tools"] as Sub[]).map((k) => (
+          {(["overview", "users", "orders", "claims", "referrals", "tools"] as Sub[]).map((k) => (
             <button key={k} className={sub === k ? "on" : ""} onClick={() => setSub(k)}>
               {k[0].toUpperCase() + k.slice(1)}
             </button>
@@ -107,6 +107,7 @@ export function AdminPanel({ tools }: { tools: ReactNode }) {
         {sub === "users" && <Users />}
         {sub === "orders" && <Orders filter={orderFilter} setFilter={setOrderFilter} />}
         {sub === "claims" && <Claims />}
+        {sub === "referrals" && <Referrals />}
         {sub === "tools" && tools}
       </div>
     </section>
@@ -222,6 +223,7 @@ type UserDetail = {
   spentCents: number;
   ledger: Array<{ id: number; delta_cents: number; reason: string; order_id: string | null; created_at: string }>;
   claims: Array<{ id: string; order_id: string; reason: string; status: string; forward_error: string | null; created_at: string }>;
+  referral?: { code: string | null; invited: number; referredBy: { id: string; name: string } | null; rewarded: boolean };
 };
 
 function Users() {
@@ -325,6 +327,15 @@ function UserProfile({ id, back }: { id: string; back: () => void }) {
         <Stat label="Spent" value={eur(d.spentCents)} sub="Delivered orders" />
         <Stat label="Orders" value={d.orders.length} sub={`${d.orders.filter((o) => o.status === "fulfilled").length} delivered`} />
         <Stat label="Joined" value={new Date(u.created_at).toLocaleDateString("en-GB")} />
+        <Stat
+          label="Referrals"
+          value={d.referral?.invited ?? 0}
+          sub={
+            d.referral?.referredBy
+              ? <>Invited by {d.referral.referredBy.name}{d.referral.rewarded ? " · reward paid" : ""}</>
+              : d.referral?.code ? <>Code {d.referral.code}</> : "Friends they invited"
+          }
+        />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "10px" }}>
@@ -603,5 +614,67 @@ function ClaimCard({ c, onChanged }: { c: ClaimRow; onChanged: () => void }) {
       )}
       <Note msg={act.msg} />
     </Card>
+  );
+}
+
+// ----- Referrals -------------------------------------------------
+
+type RefData = {
+  settings: { rewardCents: number; friendCents: number; minOrderCents: number };
+  totals: { invited: number; bought: number; inviters: number; creditPaidCents: number };
+  top: Array<{ id: string; name: string; invited: number; bought: number }>;
+  recent: Array<{ id: string; name: string | null; invitedBy: string; joinedAt: string | null; boughtAt: string | null }>;
+};
+
+function Referrals() {
+  const [d, setD] = useState<RefData | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    api<RefData>("/api/admin/referrals").then((r) => (r.error ? setErr(r.error) : setD(r))).catch((e) => setErr(String(e)));
+  }, []);
+  if (err) return <span style={{ color: "var(--accent-rose)" }}>{err}</span>;
+  if (!d) return <span className="mut">Loading…</span>;
+  const conv = d.totals.invited ? Math.round((d.totals.bought / d.totals.invited) * 100) : 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: "10px" }}>
+        <Stat label="Friends invited" value={d.totals.invited} sub={`by ${d.totals.inviters} inviter${d.totals.inviters === 1 ? "" : "s"}`} />
+        <Stat label="Became buyers" value={d.totals.bought} sub={`${conv}% of invites`} />
+        <Stat label="Credit paid out" value={eur(d.totals.creditPaidCents)} sub="Both sides combined" />
+        <Stat
+          label="Current reward"
+          value={`${eur(d.settings.rewardCents)} + ${eur(d.settings.friendCents)}`}
+          sub={`Inviter + friend · first order ≥ ${eur(d.settings.minOrderCents)}`}
+        />
+      </div>
+      <span className="mut" style={{ fontSize: "12px" }}>
+        Change the amounts with the REFERRAL_REWARD_CENTS, REFERRAL_FRIEND_CENTS and REFERRAL_MIN_ORDER_CENTS env vars on Vercel.
+      </span>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "10px" }}>
+        <Card>
+          <span className="h" style={{ fontSize: "20px" }}>Top inviters</span>
+          {d.top.length === 0 ? <span className="mut">Nobody yet.</span> : d.top.map((t, i) => (
+            <div key={t.id} className="kv" style={{ fontSize: "14px", gap: "10px" }}>
+              <span className="num mut" style={{ width: "20px" }}>{i + 1}</span>
+              <span style={{ flex: 1 }}>{t.name}</span>
+              <span className="mut" style={{ fontSize: "12px" }}>{t.invited} joined</span>
+              <span className="pill g">{t.bought} bought</span>
+            </div>
+          ))}
+        </Card>
+        <Card>
+          <span className="h" style={{ fontSize: "20px" }}>Recent sign-ups</span>
+          {d.recent.length === 0 ? <span className="mut">Nobody yet.</span> : d.recent.map((r) => (
+            <div key={r.id} className="kv" style={{ fontSize: "13px", gap: "10px" }}>
+              <span style={{ flex: 1 }}>{r.name ?? "—"} <span className="mut">via {r.invitedBy}</span></span>
+              <span className="mut" style={{ fontSize: "12px" }}>{when(r.joinedAt)}</span>
+              <span className={`pill ${r.boughtAt ? "g" : "x"}`}>{r.boughtAt ? "bought" : "no order"}</span>
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>
   );
 }

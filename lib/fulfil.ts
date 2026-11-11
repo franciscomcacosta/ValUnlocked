@@ -9,8 +9,16 @@ import { encrypt, decrypt } from "./crypto";
 import { SKIN_BRACKETS } from "./pricing";
 import { skinVariants } from "./skin-names";
 import { logToStaff } from "./discord";
+import { rewardReferral } from "./referrals";
 
 export async function fulfilOrder(orderId: string): Promise<boolean> {
+  const delivered = await deliverOrder(orderId);
+  // First paid order of an invited friend → referral credit for both.
+  if (delivered) await rewardReferral(orderId).catch((e) => console.error("[fulfil] referral reward failed", e));
+  return delivered;
+}
+
+async function deliverOrder(orderId: string): Promise<boolean> {
   // Atomically claim this order. Duplicate IPN deliveries return null.
   const { data: claimed } = await db.rpc("claim_order_for_fulfilment", { p_order_id: orderId });
   if (!claimed) return false;

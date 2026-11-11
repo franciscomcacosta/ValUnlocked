@@ -4,6 +4,7 @@ export const runtime = "nodejs";
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/supabase";
 import { encodeSession, SESSION_COOKIE, SESSION_DAYS } from "@/lib/session";
+import { attachReferrer, REFERRAL_COOKIE } from "@/lib/referrals";
 
 
 export async function GET(req: NextRequest) {
@@ -44,8 +45,14 @@ export async function GET(req: NextRequest) {
     .single();
   if (error || !user) return NextResponse.redirect(`${base}/?login=failed`);
 
+  // Came in through a friend's invite link? Link them (only works for
+  // people who haven't ordered yet, so existing customers can't be claimed).
+  const refCode = req.cookies.get(REFERRAL_COOKIE)?.value;
+  if (refCode) await attachReferrer(user.id as string, refCode).catch(() => false);
+
   const res = NextResponse.redirect(`${base}/`);
   res.cookies.delete("vs_oauth_state");
+  if (refCode) res.cookies.delete(REFERRAL_COOKIE);
   res.cookies.set(
     SESSION_COOKIE,
     encodeSession({

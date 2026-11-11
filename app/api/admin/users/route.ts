@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   if (id) {
     const user = await findUser({ userId: id });
     if (!user) return Response.json({ error: "not_found" }, { status: 404 });
-    const [sub, orders, ledger, claims] = await Promise.all([
+    const [sub, orders, ledger, claims, refRow, invited] = await Promise.all([
       db
         .from("subscriptions")
         .select("tier, status, period_end, grace_until, created_at")
@@ -52,8 +52,15 @@ export async function GET(req: Request) {
         .eq("user_id", id)
         .order("created_at", { ascending: false })
         .limit(10),
+      // Referral columns come from migration 008; errors just mean "not set up yet".
+      db.from("users").select("referral_code, referred_by, referral_rewarded_at").eq("id", id).maybeSingle(),
+      db.from("users").select("id", { count: "exact", head: true }).eq("referred_by", id),
     ]);
     const list = orders.data ?? [];
+    const r = refRow.error ? null : refRow.data;
+    const { data: referrer } = r?.referred_by
+      ? await db.from("users").select("id, discord_username, discord_id").eq("id", r.referred_by as string).maybeSingle()
+      : { data: null };
     return Response.json(
       {
         ok: true,
@@ -63,6 +70,14 @@ export async function GET(req: Request) {
         spentCents: list.filter((o) => o.status === "fulfilled").reduce((s, o) => s + paidCents(o), 0),
         ledger: ledger.data ?? [],
         claims: claims.data ?? [],
+        referral: {
+          code: (r?.referral_code as string | null) ?? null,
+          invited: invited.error ? 0 : invited.count ?? 0,
+          referredBy: referrer
+            ? { id: referrer.id as string, name: (referrer.discord_username as string | null) ?? (referrer.discord_id as string) }
+            : null,
+          rewarded: !!r?.referral_rewarded_at,
+        },
       },
       { headers: { "cache-control": "no-store" } }
     );

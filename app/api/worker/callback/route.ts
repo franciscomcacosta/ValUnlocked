@@ -66,14 +66,21 @@ export async function POST(req: Request) {
     return Response.json({ ok: true });
   }
 
-  // Failure path — staff log AND tell the buyer we're on it, so they
-  // don't sit refreshing the order page waiting for the email.
+  // Failure path. If the order already has an email (qvsp sent one, or staff
+  // added it), there's nothing to do — stay quiet.
+  if (order.inventory_id) {
+    const { data: inv } = await db.from("inventory").select("email_enc").eq("id", order.inventory_id).maybeSingle();
+    let existing = "";
+    try { existing = inv?.email_enc ? decrypt(inv.email_enc as string).trim() : ""; } catch {}
+    if (existing) return Response.json({ ok: true, note: "email already on file" });
+  }
+
+  // Otherwise: short staff ping pointing at the admin queue, and tell the
+  // buyer we're on it so they don't sit refreshing the order page.
+  const why = body.reason === "captcha_present" ? "Riot showed a captcha" : `reason: ${body.reason ?? "unknown"}`;
   await logToStaff(
-    `⚠️ Email extraction FAILED for order ${order.id} (reason: \`${body.reason ?? "unknown"}\`${
-      body.detail ? ` · ${body.detail}` : ""
-    }). ` +
-      `Run the bookmarklet manually and set the email in the inventory row, or trigger a qvsp replacement. ` +
-      `Order: ${process.env.PUBLIC_BASE_URL}/orders/${order.id}`
+    `📧 Email needed for order VU-${(order.id as string).slice(0, 8).toUpperCase()} (${why}). ` +
+      `Add it in **Admin → Emails**: ${process.env.PUBLIC_BASE_URL}/?tab=admin`
   ).catch((e) => console.error("[worker-cb] staff log failed", e));
 
   if (user?.discord_id) {

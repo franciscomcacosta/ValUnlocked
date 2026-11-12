@@ -128,3 +128,41 @@ export async function claimRates(userIds: string[]): Promise<Map<string, { claim
   for (const v of out.values()) v.flagged = v.claims >= 3 && v.claims / Math.max(v.orders, 1) >= 0.4;
   return out;
 }
+
+/** Delivered orders from the last 14 days whose account has no recovery
+ *  email yet (the worker couldn't fetch it — usually Riot's captcha). */
+export async function ordersMissingEmail(limit = 50) {
+  const { decrypt } = await import("./crypto");
+  const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
+  const { data } = await db
+    .from("orders")
+    .select("id, fulfilled_at, users(discord_id, discord_username), inventory(id, login_enc, password_enc, email_enc, email_password_enc)")
+    .eq("status", "fulfilled")
+    .not("inventory_id", "is", null)
+    .gte("fulfilled_at", since)
+    .order("fulfilled_at", { ascending: false })
+    .limit(300);
+  const dec = (v: unknown) => {
+    try { return v ? decrypt(v as string).trim() : ""; } catch { return ""; }
+  };
+  const out: Array<{
+    orderId: string; fulfilledAt: string; buyer: string; discordId: string | null;
+    login: string; password: string; emailPassword: string;
+  }> = [];
+  for (const o of data ?? []) {
+    const inv = o.inventory as unknown as { login_enc: string; password_enc: string; email_enc: string | null; email_password_enc: string | null } | null;
+    if (!inv || dec(inv.email_enc)) continue;
+    const u = o.users as unknown as { discord_id: string; discord_username: string | null } | null;
+    out.push({
+      orderId: o.id as string,
+      fulfilledAt: o.fulfilled_at as string,
+      buyer: u?.discord_username ?? u?.discord_id ?? "—",
+      discordId: u?.discord_id ?? null,
+      login: dec(inv.login_enc),
+      password: dec(inv.password_enc),
+      emailPassword: dec(inv.email_password_enc),
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}

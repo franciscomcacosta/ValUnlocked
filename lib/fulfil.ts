@@ -241,6 +241,9 @@ async function deliverOrder(orderId: string): Promise<boolean> {
     })
     .eq("id", orderId);
 
+  // Best email we have right now: scraped by our verifier, else qvsp's own.
+  const knownEmail = verifiedEmail ?? (creds.email?.trim() ? creds.email.trim() : null);
+
   if (user?.discord_id) {
     // Two DM shapes based on whether verify succeeded.
     //  - ok    → single DM with login + password + email, no test window
@@ -256,15 +259,16 @@ async function deliverOrder(orderId: string): Promise<boolean> {
         peak: (row.peak as string | null) ?? null,
         login: creds.login,
         password: creds.password,
-        email: verifiedEmail,
+        email: knownEmail,
         verified: verifyVerdict === "ok" && !!verifiedEmail,
       })
     ).catch((e) => console.error("[fulfil] DM failed", e));
   }
 
-  // Dispatch the async email extractor only when verify didn't already
-  // get us the email (captcha / timeout / worker_error paths).
-  if (!verifiedEmail) {
+  // Only send the worker to fetch the email when we don't already have one
+  // (from our own verify step OR from qvsp's purchase response). Otherwise
+  // it hits Riot's captcha for nothing and pings staff for an email we have.
+  if (!knownEmail) {
     void dispatchEmailExtraction(orderId, creds.login, creds.password);
   }
 

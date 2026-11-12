@@ -79,7 +79,7 @@ function useAction() {
 
 // ----- shell -----------------------------------------------------
 
-type Sub = "overview" | "users" | "orders" | "claims" | "referrals" | "tools";
+type Sub = "overview" | "users" | "orders" | "claims" | "emails" | "referrals" | "tools";
 
 export function AdminPanel({ tools }: { tools: ReactNode }) {
   const [sub, setSub] = useState<Sub>("overview");
@@ -90,7 +90,7 @@ export function AdminPanel({ tools }: { tools: ReactNode }) {
       <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
         <span className="lbl" style={{ flex: 1 }}>Admin</span>
         <div className="seg" role="group" aria-label="Admin section">
-          {(["overview", "users", "orders", "claims", "referrals", "tools"] as Sub[]).map((k) => (
+          {(["overview", "users", "orders", "claims", "emails", "referrals", "tools"] as Sub[]).map((k) => (
             <button key={k} className={sub === k ? "on" : ""} onClick={() => setSub(k)}>
               {k[0].toUpperCase() + k.slice(1)}
             </button>
@@ -101,12 +101,14 @@ export function AdminPanel({ tools }: { tools: ReactNode }) {
         {sub === "overview" && (
           <Overview
             goClaims={() => setSub("claims")}
+            goEmails={() => setSub("emails")}
             goStuck={() => { setOrderFilter("stuck"); setSub("orders"); }}
           />
         )}
         {sub === "users" && <Users />}
         {sub === "orders" && <Orders filter={orderFilter} setFilter={setOrderFilter} />}
         {sub === "claims" && <Claims />}
+        {sub === "emails" && <Emails />}
         {sub === "referrals" && <Referrals />}
         {sub === "tools" && tools}
       </div>
@@ -123,7 +125,7 @@ type Dash = {
   users: { total: number; newWeek: number; creditOutstandingCents: number };
   subs: { total: number; tiers: Record<string, number> };
   stock: { total: number; byRegion: Record<string, number>; lastSyncAt: string | null };
-  attention: { openClaims: number; stuckOrders: number };
+  attention: { openClaims: number; stuckOrders: number; emailsNeeded?: number };
   qvspBalance: { cents: number; currency: string } | null;
   profit?: { day: number; week: number; month: number; all: number };
   giftCostMonthCents?: number;
@@ -166,7 +168,7 @@ function SalesSwitch({ pause, onChanged }: { pause: { paused: boolean; by?: stri
   );
 }
 
-function Overview({ goClaims, goStuck }: { goClaims: () => void; goStuck: () => void }) {
+function Overview({ goClaims, goStuck, goEmails }: { goClaims: () => void; goStuck: () => void; goEmails: () => void }) {
   const [d, setD] = useState<Dash | null>(null);
   const [err, setErr] = useState("");
   const load = useCallback(() => {
@@ -186,13 +188,18 @@ function Overview({ goClaims, goStuck }: { goClaims: () => void; goStuck: () => 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-      {(d.attention.openClaims > 0 || d.attention.stuckOrders > 0 || !watcherOk) && (
+      {(d.attention.openClaims > 0 || d.attention.stuckOrders > 0 || (d.attention.emailsNeeded ?? 0) > 0 || !watcherOk) && (
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
           {d.attention.openClaims > 0 && (
             <button className="btn btn-red cs btn-sm" onClick={goClaims}>{d.attention.openClaims} open claim{d.attention.openClaims === 1 ? "" : "s"} →</button>
           )}
           {d.attention.stuckOrders > 0 && (
             <button className="btn btn-gold cs btn-sm" onClick={goStuck}>{d.attention.stuckOrders} stuck deliver{d.attention.stuckOrders === 1 ? "y" : "ies"} →</button>
+          )}
+          {(d.attention.emailsNeeded ?? 0) > 0 && (
+            <button className="btn btn-gold cs btn-sm" onClick={goEmails}>
+              {d.attention.emailsNeeded} email{d.attention.emailsNeeded === 1 ? "" : "s"} to add →
+            </button>
           )}
           {!watcherOk && <span className="pill r">Stock watcher looks down — last sync {ago(d.stock.lastSyncAt)}</span>}
         </div>
@@ -789,5 +796,92 @@ function Referrals() {
         </Card>
       </div>
     </div>
+  );
+}
+
+// ----- Emails ----------------------------------------------------
+// Recovery emails the worker couldn't fetch (Riot showed a captcha).
+// Staff log in to the account themselves, read the email, paste it here.
+
+type MissingEmail = {
+  orderId: string; fulfilledAt: string; buyer: string; discordId: string | null;
+  login: string; password: string; emailPassword: string;
+};
+
+function CopyField({ label, value }: { label: string; value: string }) {
+  const [done, setDone] = useState(false);
+  if (!value) return null;
+  return (
+    <button
+      className="cs"
+      onClick={() => {
+        try { navigator.clipboard?.writeText(value); } catch { /* blocked */ }
+        setDone(true);
+        setTimeout(() => setDone(false), 1200);
+      }}
+      title={`Copy ${label}`}
+      style={{ border: 0, cursor: "pointer", background: "#fff", padding: "6px 10px", display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0, flex: "1 1 160px" }}
+    >
+      <span className="lbl" style={{ fontSize: "10px" }}>{label} {done ? "· copied ✓" : "· click to copy"}</span>
+      <span className="mono" style={{ fontSize: "14px", fontWeight: 600, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+    </button>
+  );
+}
+
+function Emails() {
+  const [rows, setRows] = useState<MissingEmail[] | null>(null);
+  const load = useCallback(() => {
+    api<{ orders: MissingEmail[] }>("/api/admin/emails").then((r) => setRows(r.orders ?? []));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (rows === null) return <span className="mut">Loading…</span>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px", maxWidth: "820px" }}>
+      <span className="mut" style={{ fontSize: "13px" }}>
+        Accounts delivered in the last 14 days with no recovery email yet — usually because Riot showed a captcha to the worker.
+        Log in at Riot with the details below, copy the email shown on the account, paste it here. The buyer gets it in a DM straight away.
+      </span>
+      {rows.length === 0 ? (
+        <span className="mut">All caught up — every recent order has its email. 🎉</span>
+      ) : (
+        rows.map((r) => <EmailRow key={r.orderId} r={r} onSaved={load} />)
+      )}
+    </div>
+  );
+}
+
+function EmailRow({ r, onSaved }: { r: MissingEmail; onSaved: () => void }) {
+  const act = useAction();
+  const [email, setEmail] = useState("");
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <a className="mono" href={`/orders/${r.orderId}`} style={{ color: "inherit", fontWeight: 600 }}>{ref(r.orderId)}</a>
+        <span>{r.buyer}</span>
+        <span className="mut" style={{ marginLeft: "auto", fontSize: "12px" }}>delivered {ago(r.fulfilledAt)}</span>
+      </div>
+      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+        <CopyField label="Login" value={r.login} />
+        <CopyField label="Password" value={r.password} />
+        <CopyField label="Email password" value={r.emailPassword} />
+      </div>
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+        <a href="https://account.riotgames.com/" target="_blank" rel="noreferrer" className="btn btn-soft cs btn-sm">Open Riot login ↗</a>
+        <input
+          className="inp"
+          type="email"
+          placeholder="Paste the account's email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && email.trim()) act.run("/api/admin/emails", { orderId: r.orderId, email }, onSaved); }}
+          style={{ flex: "1 1 240px" }}
+        />
+        <button className="btn btn-dark cs btn-sm" disabled={act.busy || !email.trim()} onClick={() => act.run("/api/admin/emails", { orderId: r.orderId, email }, onSaved)}>
+          {act.busy ? "Saving…" : "Save & DM buyer"}
+        </button>
+      </div>
+      <Note msg={act.msg} />
+    </Card>
   );
 }

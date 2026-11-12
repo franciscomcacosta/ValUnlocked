@@ -10,7 +10,7 @@ import { db } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/session";
 import { getBalance } from "@/lib/qvsp";
 import { SKIN_BRACKETS } from "@/lib/pricing";
-import { pageAll, paidCents } from "@/lib/admin";
+import { pageAll, paidCents, ordersMissingEmail } from "@/lib/admin";
 import { getSalesPause } from "@/lib/shop-flags";
 
 type OrderRow = {
@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   const monthAgo = new Date(now - 30 * 86_400_000).toISOString();
 
   try {
-    const [orders, costs, users, subs, stock, lastSync, openClaims, stuck, topups, subPaid, qvsp, watcherBeat, vouches, pause] =
+    const [orders, costs, users, subs, stock, lastSync, openClaims, stuck, topups, subPaid, qvsp, watcherBeat, vouches, pause, missingEmails] =
       await Promise.all([
         pageAll<OrderRow>((a, b) =>
           db.from("orders").select("id, status, credit_used_cents, charge_cents, created_at, fulfilled_at").range(a, b)
@@ -69,6 +69,7 @@ export async function GET(req: Request) {
         db.from("service_heartbeats").select("beat_at").eq("name", "watcher").maybeSingle(),
         db.from("vouches").select("stars, created_at"),
         getSalesPause(),
+        ordersMissingEmail(100).catch(() => []),
       ]);
 
     // ── revenue ────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ export async function GET(req: Request) {
         },
         subs: { total: (subs.data ?? []).length, tiers },
         stock: { total: stock.length, byRegion: stockByRegion, lastSyncAt: watcherSeenAt },
-        attention: { openClaims: openClaims.count ?? 0, stuckOrders: stuck.count ?? 0 },
+        attention: { openClaims: openClaims.count ?? 0, stuckOrders: stuck.count ?? 0, emailsNeeded: missingEmails.length },
         qvspBalance: qvsp ? { cents: qvsp.cents, currency: qvsp.currency } : null,
         ratings: { count: ratings.length, avg: avg(ratings), monthCount: recentRatings.length, monthAvg: avg(recentRatings) },
         salesPause: pause,

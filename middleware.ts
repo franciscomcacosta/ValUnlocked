@@ -23,6 +23,8 @@ const PUBLIC_API_PATHS = [
   "/api/auth/login",
   "/api/auth/callback",
   "/api/auth/logout",
+  "/api/auth/confirm",  // "Continue as <name>" step (signed token)
+  "/login",             // sign-in page: errors + confirm step, must never need a login
   "/api/ipn",
   "/api/webhooks/",   // prefix — each webhook verifies its own secret
   "/api/cron/",       // prefix match — any /api/cron/* is cron-secret-gated internally
@@ -34,7 +36,7 @@ export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // Let auth endpoints + webhooks + crons through — they have their own auth.
-  if (PUBLIC_API_PATHS.some((p) => pathname === p || pathname.startsWith(p))) {
+  if (PUBLIC_API_PATHS.some((p) => pathname === p || (p.endsWith("/") && pathname.startsWith(p)))) {
     return NextResponse.next();
   }
 
@@ -44,10 +46,14 @@ export function middleware(req: NextRequest) {
   const hasSession = req.cookies.get(SESSION_COOKIE)?.value;
   if (hasSession) return NextResponse.next();
 
-  // Unauthenticated → bounce to OAuth start. Preserve the originally-requested
-  // path so we could return them to it after login (callback would need to
-  // read a `returnTo` cookie we'd set here; keeping it simple for now).
+  // Signed-out API calls get a plain 401 (a redirect to Discord would just
+  // break the page's fetch); pages go to Discord login and come back here.
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "login_required" }, { status: 401 });
+  }
   const loginUrl = new URL("/api/auth/login", req.url);
+  const next = pathname + req.nextUrl.search;
+  if (next !== "/") loginUrl.searchParams.set("next", next);
   return NextResponse.redirect(loginUrl);
 }
 

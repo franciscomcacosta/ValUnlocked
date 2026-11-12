@@ -74,3 +74,14 @@ export function avatarUrl(s: Pick<Session, "did" | "avatar">): string {
     ? `https://cdn.discordapp.com/avatars/${s.did}/${s.avatar}.png?size=64`
     : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(s.did) >> 22n) % 6}.png`;
 }
+
+/** Cookie settings for a fresh login session (used by the OAuth callback
+ *  and the "continue as …" confirm step). */
+export function sessionCookie(s: Omit<Session, "exp">): [string, string, { httpOnly: true; secure: boolean; sameSite: "lax"; maxAge: number; path: string }] {
+  const exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
+  return [
+    SESSION_COOKIE,
+    encodeSession({ ...s, exp }),
+    { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", maxAge: SESSION_DAYS * 86400, path: "/" },
+  ];
+}

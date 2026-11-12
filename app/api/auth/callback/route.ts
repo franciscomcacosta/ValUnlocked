@@ -1,22 +1,41 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// Discord sends people back here after the authorize screen.
+//
+// Never loops: every failure goes to /login (a public page) with a clear
+// reason and a "Try again" button — not back into the login-gated site.
+//
+// Same browser that started the login (state cookie matches) → signed in.
+// Different browser (phone handed off to the Discord app and back, cookie
+// lost) → the signed state still proves the login is ours, and the person
+// confirms with one click on /login ("Continue as <name>").
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/supabase";
-import { encodeSession, SESSION_COOKIE, SESSION_DAYS } from "@/lib/session";
+import { sessionCookie } from "@/lib/session";
 import { attachReferrer, REFERRAL_COOKIE } from "@/lib/referrals";
+import { readState, makeConfirm } from "@/lib/oauth-state";
 
+const STATE_COOKIE = "vs_oauth_state";
 
 export async function GET(req: NextRequest) {
   const base = process.env.PUBLIC_BASE_URL!;
-  const code = req.nextUrl.searchParams.get("code");
-  const state = req.nextUrl.searchParams.get("state");
-  const expected = req.cookies.get("vs_oauth_state")?.value;
-  if (!code || !state || !expected || state !== expected) {
-    return NextResponse.redirect(`${base}/?login=failed`);
-  }
+  const q = req.nextUrl.searchParams;
+  const fail = (reason: string) => {
+    const res = NextResponse.redirect(`${base}/login?error=${reason}`);
+    res.cookies.delete(STATE_COOKIE);
+    return res;
+  };
 
-  // Exchange the code for an access token
+  // Pressed "Cancel" on Discord's screen.
+  if (q.get("error")) return fail(q.get("error") === "access_denied" ? "denied" : "discord");
+
+  const code = q.get("code");
+  const stateToken = q.get("state");
+  const state = readState(stateToken);
+  if (!code || !state) return fail("expired");
+
+  // Exchange the code for an access token.
   const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -27,48 +46,48 @@ export async function GET(req: NextRequest) {
       code,
       redirect_uri: `${base}/api/auth/callback`,
     }),
-  });
-  if (!tokenRes.ok) return NextResponse.redirect(`${base}/?login=failed`);
-  const { access_token } = await tokenRes.json();
+  }).catch(() => null);
+  if (!tokenRes?.ok) {
+    console.warn("[auth] token exchange failed", tokenRes?.status, await tokenRes?.text().catch(() => ""));
+    // A used/expired code usually means the page was refreshed or opened twice.
+    return fail("expired");
+  }
+  const { access_token } = (await tokenRes.json()) as { access_token: string };
 
   const meRes = await fetch("https://discord.com/api/users/@me", {
     headers: { Authorization: `Bearer ${access_token}` },
-  });
-  if (!meRes.ok) return NextResponse.redirect(`${base}/?login=failed`);
+  }).catch(() => null);
+  if (!meRes?.ok) return fail("discord");
   const me = (await meRes.json()) as { id: string; username: string; global_name?: string; avatar: string | null };
+  const name = me.global_name || me.username;
 
-  // Create the user on first login, keep the name fresh after that
+  // Create the user on first login, keep the name fresh after that.
   const { data: user, error } = await db
     .from("users")
-    .upsert({ discord_id: me.id, discord_username: me.global_name || me.username }, { onConflict: "discord_id" })
+    .upsert({ discord_id: me.id, discord_username: name }, { onConflict: "discord_id" })
     .select("id")
     .single();
-  if (error || !user) return NextResponse.redirect(`${base}/?login=failed`);
+  if (error || !user) {
+    console.error("[auth] user upsert failed", error);
+    return fail("server");
+  }
+
+  const sameBrowser = req.cookies.get(STATE_COOKIE)?.value === stateToken;
+  const ref = req.cookies.get(REFERRAL_COOKIE)?.value ?? state.r ?? null;
+
+  if (!sameBrowser) {
+    // Finished in a different browser: ask them to confirm it's them.
+    const token = makeConfirm({ uid: user.id as string, did: me.id, name, avatar: me.avatar, next: state.next, ref });
+    return NextResponse.redirect(`${base}/login?confirm=${encodeURIComponent(token)}`);
+  }
 
   // Came in through a friend's invite link? Link them (only works for
   // people who haven't ordered yet, so existing customers can't be claimed).
-  const refCode = req.cookies.get(REFERRAL_COOKIE)?.value;
-  if (refCode) await attachReferrer(user.id as string, refCode).catch(() => false);
+  if (ref) await attachReferrer(user.id as string, ref).catch(() => false);
 
-  const res = NextResponse.redirect(`${base}/`);
-  res.cookies.delete("vs_oauth_state");
-  if (refCode) res.cookies.delete(REFERRAL_COOKIE);
-  res.cookies.set(
-    SESSION_COOKIE,
-    encodeSession({
-      uid: user.id,
-      did: me.id,
-      name: me.global_name || me.username,
-      avatar: me.avatar,
-      exp: Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400,
-    }),
-    {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: SESSION_DAYS * 86400,
-      path: "/",
-    }
-  );
+  const res = NextResponse.redirect(`${base}${state.next}`);
+  res.cookies.delete(STATE_COOKIE);
+  res.cookies.delete(REFERRAL_COOKIE);
+  res.cookies.set(...sessionCookie({ uid: user.id as string, did: me.id, name, avatar: me.avatar }));
   return res;
 }

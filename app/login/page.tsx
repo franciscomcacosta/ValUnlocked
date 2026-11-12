@@ -4,6 +4,17 @@
 // and show a slice of what's inside (the live-stock marquee).
 
 import { LockLogo } from "@/components/lock-logo";
+import { readConfirm, safeNext } from "@/lib/oauth-state";
+
+export const dynamic = "force-dynamic";
+
+// Why a login didn't work, in plain words (?error=… from the callback).
+const ERRORS: Record<string, { title: string; text: string }> = {
+  denied: { title: "Sign-in cancelled", text: "You pressed Cancel on Discord. We only need your username — press the button to try again." },
+  expired: { title: "That sign-in link expired", text: "It took too long or the page was opened twice. Just press the button below to sign in again." },
+  discord: { title: "Discord didn't respond", text: "Discord had a hiccup. Wait a few seconds and try again." },
+  server: { title: "Something went wrong on our side", text: "Please try again. If it keeps happening, open a ticket in our Discord." },
+};
 
 // Sample feed for the marquee. Replace with a /api/public-stats fetch in
 // phase 4 when we wire real data to all surfaces.
@@ -18,9 +29,25 @@ const SAMPLE_FEED = [
   { item: "RGX 11z Pro Vandal",    r: "LATAM", p: "7.19",  c: "#f5955b" },
 ];
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   // Duplicate feed so marquee loops seamlessly.
   const feed = SAMPLE_FEED.concat(SAMPLE_FEED);
+  const sp = await searchParams;
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? null;
+  const pending = readConfirm(one(sp.confirm));
+  const confirmToken = pending ? one(sp.confirm) : null;
+  const error = !pending && one(sp.confirm) ? ERRORS.expired : ERRORS[one(sp.error) ?? ""] ?? null;
+  const next = safeNext(one(sp.next));
+  const loginHref = next === "/" ? "/api/auth/login" : `/api/auth/login?next=${encodeURIComponent(next)}`;
+  const avatarUrl = pending
+    ? pending.avatar
+      ? `https://cdn.discordapp.com/avatars/${pending.did}/${pending.avatar}.png?size=96`
+      : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(pending.did) >> 22n) % 6}.png`
+    : null;
 
   return (
     <div
@@ -159,9 +186,48 @@ export default function LoginPage() {
             subscription and your purchases.
           </p>
 
+          {error && (
+            <div
+              role="alert"
+              style={{
+                width: "100%",
+                textAlign: "left",
+                background: "rgba(255,70,85,0.12)",
+                borderLeft: "3px solid var(--vu-red)",
+                padding: "10px 12px",
+                marginBottom: "8px",
+              }}
+            >
+              <div className="bc" style={{ color: "#fff", fontWeight: 700, fontSize: "16px" }}>{error.title}</div>
+              <div style={{ color: "var(--vu-ivory-dim)", fontSize: "13px" }}>{error.text}</div>
+            </div>
+          )}
+
+          {pending && confirmToken ? (
+            <form method="post" action="/api/auth/confirm" style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
+              <input type="hidden" name="token" value={confirmToken} />
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", background: "rgba(255,255,255,0.05)", padding: "12px 14px" }}>
+                {avatarUrl && <img src={avatarUrl} alt="" width={44} height={44} style={{ borderRadius: "50%", flex: "none" }} />}
+                <div style={{ textAlign: "left", minWidth: 0 }}>
+                  <div className="mut" style={{ fontSize: "12px", color: "var(--vu-ivory-dim)" }}>Signed in to Discord as</div>
+                  <div className="bc" style={{ color: "#fff", fontWeight: 700, fontSize: "20px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pending.name}</div>
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="dc cs btn-discord"
+                style={{ width: "100%", height: "56px", border: 0, cursor: "pointer", fontFamily: "var(--font-head)", textTransform: "uppercase", fontWeight: 700, fontSize: "20px", letterSpacing: "0.05em" }}
+              >
+                Continue as {pending.name}
+              </button>
+              <a href="/api/auth/login?switch=1" style={{ color: "var(--vu-ivory-dim)", fontSize: "13px", textDecoration: "underline" }}>
+                Not you? Use a different Discord account
+              </a>
+            </form>
+          ) : (
           <a
             className="dc cs btn-discord"
-            href="/api/auth/login"
+            href={loginHref}
             style={{
               width: "100%",
               height: "56px",
@@ -186,8 +252,9 @@ export default function LoginPage() {
             >
               <path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.3.5a18 18 0 0 1 4.3 1.4 18.7 18.7 0 0 0-14.9 0A18 18 0 0 1 8.9 3.5L8.6 3a19.8 19.8 0 0 0-4.9 1.4C.6 9 .2 13.5.5 18a20 20 0 0 0 6 3l.7-1.1c-1-.4-2-.9-2.9-1.5l.6-.4a14.3 14.3 0 0 0 12.2 0l.6.4c-.9.6-1.9 1.1-2.9 1.5l.7 1.1a20 20 0 0 0 6-3c.4-5.2-.5-9.6-3.2-13.6ZM8.3 15.3c-1.2 0-2.1-1.1-2.1-2.4 0-1.3.9-2.4 2.1-2.4 1.2 0 2.2 1.1 2.1 2.4 0 1.3-.9 2.4-2.1 2.4Zm7.4 0c-1.2 0-2.1-1.1-2.1-2.4 0-1.3.9-2.4 2.1-2.4 1.2 0 2.2 1.1 2.1 2.4 0 1.3-.9 2.4-2.1 2.4Z" />
             </svg>
-            Continue with Discord
+            {error ? "Try again with Discord" : "Continue with Discord"}
           </a>
+          )}
 
           <div
             style={{

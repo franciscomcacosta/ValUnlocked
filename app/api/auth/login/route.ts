@@ -1,27 +1,38 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
+import { makeState, safeNext } from "@/lib/oauth-state";
+import { REFERRAL_COOKIE } from "@/lib/referrals";
 
+// Sends the user to Discord's authorize screen (scope: identify only).
+//   ?next=/orders/123   where to land after signing in
+//   ?switch=1           always show Discord's screen (to pick another account)
+//
+// The state is signed (lib/oauth-state.ts), so the callback can verify it even
+// if the login comes back in a different browser (phones hand off to the
+// Discord app). The cookie copy is only a bonus for the same-browser case.
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const ref = req.headers.get("cookie")?.match(new RegExp(`(?:^|;\\s*)${REFERRAL_COOKIE}=([^;]+)`))?.[1] ?? null;
+  const state = makeState(safeNext(url.searchParams.get("next")), ref ? decodeURIComponent(ref) : null);
 
-// Sends the user to Discord's consent screen (scope: identify only).
-export async function GET() {
-  const state = randomBytes(16).toString("hex");
-  const url = new URL("https://discord.com/oauth2/authorize");
-  url.searchParams.set("client_id", process.env.DISCORD_CLIENT_ID!);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", `${process.env.PUBLIC_BASE_URL}/api/auth/callback`);
-  url.searchParams.set("scope", "identify");
-  url.searchParams.set("state", state);
-  url.searchParams.set("prompt", "none");
+  const discord = new URL("https://discord.com/oauth2/authorize");
+  discord.searchParams.set("client_id", process.env.DISCORD_CLIENT_ID!);
+  discord.searchParams.set("response_type", "code");
+  discord.searchParams.set("redirect_uri", `${process.env.PUBLIC_BASE_URL}/api/auth/callback`);
+  discord.searchParams.set("scope", "identify");
+  discord.searchParams.set("state", state);
+  // "none" skips the screen for people who already authorized us; first-timers
+  // still see it. "consent" forces it, so people can switch account.
+  discord.searchParams.set("prompt", url.searchParams.get("switch") ? "consent" : "none");
 
-  const res = NextResponse.redirect(url);
+  const res = NextResponse.redirect(discord);
   res.cookies.set("vs_oauth_state", state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 600,
+    maxAge: 30 * 60,
     path: "/",
   });
   return res;

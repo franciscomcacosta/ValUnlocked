@@ -40,7 +40,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const { id } = await ctx.params;
   const { data: order } = await db
     .from("orders")
-    .select("id, user_id, status, price_cents, credit_used_cents, charge_cents, currency, created_at, paid_at, fulfilled_at, inventory_id, products(name, region, rank)")
+    .select("id, user_id, status, price_cents, credit_used_cents, charge_cents, currency, created_at, paid_at, fulfilled_at, inventory_id, np_invoice_id, products(name, region, rank)")
     .eq("id", id)
     .single();
   if (!order || order.user_id !== userId) return Response.json({ error: "not_found" }, { status: 404 });
@@ -87,8 +87,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const rankArt = rankRaw ? await lookupRank(rankRaw).then((r) => (r.icon ? r : lookupRank(`${rankRaw} 1`))) : null;
   const rankName = rankArt?.canonicalName ?? (rankRaw ? titleCase(rankRaw) : null);
   const skins = ((stock?.skins as string[] | null) ?? []).filter(Boolean);
+  // Every skin (capped) with its art, best tier first, for the inventory grid.
   const preview = await Promise.all(
-    skins.slice(0, 8).map(async (n) => {
+    skins.slice(0, 60).map(async (n) => {
       const a = await lookupSkinArt(n.replace(/\s*\(.*\)\s*$/, ""));
       const parts = n.split(" ");
       return {
@@ -112,6 +113,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       region: (stock?.region as string | null) ?? product?.region ?? null,
       rank: rankName,
       rank_tier: rankName ? rankName.split(" ")[0] : null,
+      rank_icon: rankArt?.icon ?? null,
       peak_rank: stock?.peak ? titleCase(stock.peak as string) : null,
       last_played_relative: /^\d{4}-/.test(String(stock?.last_played ?? "")) ? relative(stock?.last_played as string) : (stock?.last_played as string | null) ?? null,
       delivered_at: fulfilledAt,
@@ -141,6 +143,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       // Report-a-problem state
       claim_window_ends_at: windowEndsAt,
       claims: claimsRes.error ? [] : claimsRes.data ?? [],
+      created_at: order.created_at,
+      // Unpaid orders: where to finish paying, and when the hold runs out.
+      pay_url:
+        ["pending", "waiting"].includes(order.status as string) && order.np_invoice_id
+          ? `https://nowpayments.io/payment/?iid=${order.np_invoice_id}`
+          : null,
+      hold_ends_at: ["pending", "waiting"].includes(order.status as string)
+        ? new Date(new Date(order.created_at as string).getTime() + 3 * 3_600_000).toISOString()
+        : null,
     },
     { headers: { "cache-control": "no-store" } }
   );

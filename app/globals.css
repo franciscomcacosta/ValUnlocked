@@ -435,7 +435,7 @@ input, select, textarea {
   flex: none;
   border: 0;
   background: transparent;
-  padding: 0 14px;
+  padding: 0 10px;
   color: var(--vu-mute-soft);
   font-family: var(--font-head);
   text-transform: uppercase;
@@ -874,3 +874,8 @@ main > div { animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
   .email-getting { animation: none; color: #5b6474; background: none; }
   .email-dot { animation: none; }
 }
+
+/* Narrower screens: logo only (no wordmark), then the plan pill drops its
+   tier name (letter + colour stay), so every tab keeps fitting. */
+@media (max-width: 1600px) { .hdr-wordmark { display: none; } }
+@media (max-width: 1280px) { .hdr-plan-name { display: none; } .nav button { padding: 0 8px; font-size: 16px; } }

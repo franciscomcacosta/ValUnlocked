@@ -12,8 +12,7 @@ import { LockLogo } from "@/components/lock-logo";
 import { WelcomeGift } from "@/components/welcome-gift";
 import { ClaimOutcomeModal } from "@/components/claims";
 import { AdminPanel } from "@/components/admin-panel";
-import { InviteTab } from "@/components/referral";
-import { AlertsTab } from "@/components/restock-alerts";
+import { AlertsBell } from "@/components/restock-alerts";
 import { useStockFeed, useStockVersion, DropToasts, type StockDrop } from "@/components/live-stock";
 import { TOPUP_TIERS, TOPUP_BONUS_PCT } from "@/lib/pricing";
 
@@ -106,12 +105,20 @@ const eur = (c: number) => (c / 100).toFixed(2);
 // Root
 // ================================================================
 
-type TabKey = "stock" | "subscribe" | "purchases" | "alerts" | "invite" | "xray" | "autobuy" | "admin";
+type TabKey = "stock" | "subscribe" | "purchases" | "xray" | "autobuy" | "admin";
+const TAB_KEYS: TabKey[] = ["stock", "subscribe", "purchases", "xray", "autobuy", "admin"];
 
 export default function Page() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabKey>("stock");
+  // Deep links like /?tab=purchases (the order page's "My purchases" link).
+  useEffect(() => {
+    try {
+      const t = new URLSearchParams(window.location.search).get("tab") as TabKey | null;
+      if (t && TAB_KEYS.includes(t)) setTab(t);
+    } catch { /* ignore */ }
+  }, []);
   const stockFeed = useStockFeed();
   const [topup, setTopup] = useState<{ open: boolean; returnId: string | null }>({ open: false, returnId: null });
 
@@ -188,8 +195,6 @@ export default function Page() {
           <SubscribeTab me={me} reload={() => window.location.reload()} />
         )}
         {tab === "purchases" && <PurchasesTab />}
-        {tab === "alerts" && <AlertsTab earlyAccess={me.sub?.tier === "premium" || me.sub?.tier === "ultra"} onSubscribe={() => setTab("subscribe")} />}
-        {tab === "invite" && <InviteTab />}
         {tab === "xray" && <XrayTab isUltra={isUltra} onSub={() => setTab("subscribe")} onOrders={() => setTab("purchases")} />}
         {tab === "autobuy" && <AutobuyTab me={me} isUltra={isUltra} onSub={() => setTab("subscribe")} onTopup={() => setTopup({ open: true, returnId: null })} />}
         {tab === "admin" && me.isAdmin && <AdminPanel tools={<AdminTab />} />}
@@ -249,13 +254,13 @@ function Header({
           height: "58px",
           display: "flex",
           alignItems: "center",
-          gap: "20px",
+          gap: "12px",
         }}
       >
         {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: "none" }}>
           <LockLogo size={28} />
-          <span className="h" style={{ fontSize: "22px", color: "#fff" }}>
+          <span className="h hdr-wordmark" style={{ fontSize: "22px", color: "#fff" }}>
             Val <span style={{ color: "var(--vu-red)" }}>Unlocked</span>
           </span>
         </div>
@@ -266,8 +271,6 @@ function Header({
             { key: "stock",      label: "Stock",         ultra: false },
             { key: "subscribe",  label: "Subscribe",     ultra: false },
             { key: "purchases",  label: "My Purchases",  ultra: false },
-            { key: "alerts",     label: "🔔 Alerts",     ultra: false },
-            { key: "invite",     label: "Invite",        ultra: false },
             { key: "xray",       label: isUltra ? "⚡ X-RAY" : "🔒 X-RAY", ultra: true },
             { key: "autobuy",    label: isUltra ? "AUTO-BUY" : "🔒 AUTO-BUY", ultra: true },
           ] as const).map((t) => (
@@ -329,7 +332,7 @@ function Header({
               }}
             >
               <span style={{ display: "flex", alignItems: "baseline", gap: "8px", whiteSpace: "nowrap" }}>
-                <span className="bc" style={{ fontWeight: 700, fontSize: "15px", color: "#fff", letterSpacing: "0.08em", lineHeight: 1 }}>
+                <span className="bc hdr-plan-name" style={{ fontWeight: 700, fontSize: "15px", color: "#fff", letterSpacing: "0.08em", lineHeight: 1 }}>
                   {TIER_LABEL[me.sub.tier]}
                 </span>
                 <span className="bc num" style={{ fontWeight: 600, fontSize: "13px", color: tierColor, lineHeight: 1 }}>
@@ -352,6 +355,12 @@ function Header({
           </div>
         )}
 
+        {/* Restock alerts — bell with a small dropdown */}
+        <AlertsBell
+          earlyAccess={me.sub?.tier === "premium" || me.sub?.tier === "ultra"}
+          onSubscribe={() => onTab("subscribe")}
+        />
+
         {/* Credit chip — opens the top-up pop-up */}
         <button
           className="cs credit-chip"
@@ -369,7 +378,6 @@ function Header({
             background: "rgba(255,212,0,0.12)",
           }}
         >
-          <span className="bc" style={{ color: "#ffd400", fontWeight: 600, fontSize: "14px" }}>Credit</span>
           <span className="num" style={{ fontWeight: 700, color: "#ffd400" }}>€{eur(me.creditCents)}</span>
           <span
             className="bc"
@@ -430,14 +438,14 @@ function Header({
               alignItems: "center",
               gap: "6px",
             }}
-            title={me.name}
+            title={`Log out (${me.name})`}
+            aria-label="Log out"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <polyline points="16 17 21 12 16 7" />
               <line x1="21" y1="12" x2="9" y2="12" />
             </svg>
-            Log out
           </button>
         </form>
       </div>
@@ -1979,8 +1987,47 @@ function SubscribeTab({ me, reload }: { me: Me; reload: () => void }) {
 // Purchases tab
 // ================================================================
 
+type PurchaseRow = {
+  id: string;
+  status: string;
+  price_cents: number;
+  paid_cents?: number;
+  created_at: string;
+  fulfilled_at: string | null;
+  products: { name: string | null; region: string | null; rank: string | null } | null;
+  account?: { region: string | null; skin_count: number | null; peak: string | null; level: number | null } | null;
+  pay_url?: string | null;
+};
+
+// Buyer-facing status for each raw order status.
+const PURCHASE_STATUS: Record<string, { label: string; tone: "g" | "a" | "b" | "r" | "x"; group: "delivered" | "pending" | "refunded" | "other" }> = {
+  fulfilled: { label: "Delivered", tone: "g", group: "delivered" },
+  pending: { label: "Waiting for payment", tone: "a", group: "pending" },
+  waiting: { label: "Waiting for payment", tone: "a", group: "pending" },
+  confirming: { label: "Confirming payment", tone: "b", group: "pending" },
+  confirmed: { label: "Delivering", tone: "b", group: "pending" },
+  sending: { label: "Confirming payment", tone: "b", group: "pending" },
+  paid: { label: "Delivering", tone: "b", group: "pending" },
+  partially_paid: { label: "Part-paid — open a ticket", tone: "r", group: "other" },
+  refunded_credit: { label: "Refunded to credit", tone: "b", group: "refunded" },
+  expired: { label: "Expired", tone: "x", group: "other" },
+  failed: { label: "Failed", tone: "r", group: "other" },
+};
+const PURCHASE_STRIPE: Record<string, string> = { g: "#4ade80", a: "#ffd400", b: "#22d3ee", r: "#fb7185", x: "#c3cad4" };
+
+function purchaseAgo(iso: string): string {
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return d < 7 ? `${d} day${d === 1 ? "" : "s"} ago` : new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
 function PurchasesTab() {
-  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [orders, setOrders] = useState<PurchaseRow[] | null>(null);
+  const [filter, setFilter] = useState<"all" | "delivered" | "pending" | "refunded">("all");
 
   useEffect(() => {
     fetch("/api/orders")
@@ -1989,135 +2036,133 @@ function PurchasesTab() {
       .catch(() => setOrders([]));
   }, []);
 
-  const spent = (orders ?? []).reduce((a, o) => a + o.price_cents, 0);
-  const deliveredCount = (orders ?? []).filter((o) => o.status === "delivered").length;
-
   if (orders === null) {
     return (
-      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <span className="bc mut">Loading…</span>
-      </div>
+      <section className="pn cut" style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span className="bc mut" style={{ fontSize: "18px" }}>Loading your purchases…</span>
+      </section>
     );
   }
+
+  const info = (o: PurchaseRow) => PURCHASE_STATUS[o.status] ?? { label: o.status.replace(/_/g, " "), tone: "x" as const, group: "other" as const };
+  const delivered = orders.filter((o) => info(o).group === "delivered");
+  const spent = delivered.reduce((a, o) => a + (o.paid_cents ?? o.price_cents), 0);
+  const skinsOwned = delivered.reduce((a, o) => a + (o.account?.skin_count ?? 0), 0);
+  const pendingCount = orders.filter((o) => info(o).group === "pending").length;
+  const shown = filter === "all" ? orders : orders.filter((o) => info(o).group === filter);
+
   if (orders.length === 0) {
     return (
-      <section
-        className="pn cut"
-        style={{
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: "8px",
-          padding: "40px",
-          textAlign: "center",
-        }}
-      >
-        <span className="h" style={{ fontSize: "28px" }}>No purchases yet</span>
-        <p className="mut">
-          Head to the <b>Stock</b> tab to grab your first account.
-        </p>
+      <section className="pn cut" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "10px", padding: "40px", textAlign: "center" }}>
+        <span style={{ fontSize: "44px" }} aria-hidden="true">🛒</span>
+        <span className="h" style={{ fontSize: "32px" }}>No purchases yet</span>
+        <p className="mut" style={{ margin: 0, maxWidth: "360px" }}>Your accounts show up here the moment you buy — with the login, email and full skin list.</p>
       </section>
     );
   }
 
   return (
-    <section
-      className="pn cut"
-      style={{
-        height: "100%",
-        padding: "18px 0 0",
-        display: "flex",
-        flexDirection: "column",
-        gap: "14px",
-        minHeight: 0,
-      }}
-    >
-      <div style={{ padding: "0 16px", display: "flex", gap: "28px", alignItems: "flex-end" }}>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <span className="lbl" style={{ fontSize: "12px" }}>Orders</span>
-          <span className="h num" style={{ fontSize: "32px" }}>{orders.length}</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <span className="lbl" style={{ fontSize: "12px" }}>Spent</span>
-          <span className="h num" style={{ fontSize: "32px" }}>€{eur(spent)}</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <span className="lbl" style={{ fontSize: "12px" }}>Delivered</span>
-          <span className="h num" style={{ fontSize: "32px", color: "var(--accent-success)" }}>{deliveredCount}</span>
+    <section className="pn cut" style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {/* Summary + filter */}
+      <div style={{ flex: "none", padding: "18px 20px 14px", display: "flex", alignItems: "flex-end", gap: "28px", flexWrap: "wrap", borderBottom: "1px solid var(--vu-divider)" }}>
+        {[
+          ["Accounts", String(delivered.length), "var(--vu-navy)"],
+          ["Skins owned", String(skinsOwned), "var(--vu-navy)"],
+          ["Spent", `€${eur(spent)}`, "var(--vu-navy)"],
+          ...(pendingCount ? [["In progress", String(pendingCount), "#a16207"]] : []),
+        ].map(([k, v, c]) => (
+          <div key={k} style={{ display: "flex", flexDirection: "column" }}>
+            <span className="lbl" style={{ fontSize: "12px" }}>{k}</span>
+            <span className="h num" style={{ fontSize: "30px", lineHeight: 1.05, color: c }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ flex: 1 }} />
+        <div className="seg" role="group" aria-label="Filter purchases">
+          {([
+            ["all", "All", orders.length],
+            ["delivered", "Delivered", delivered.length],
+            ["pending", "In progress", pendingCount],
+            ["refunded", "Refunded", orders.filter((o) => info(o).group === "refunded").length],
+          ] as const).map(([k, l, n]) => (
+            <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)} disabled={k !== "all" && n === 0}>
+              {l} <span className="c">{n}</span>
+            </button>
+          ))}
         </div>
       </div>
-      <div style={{ overflow: "auto", flex: 1, minHeight: 0 }}>
-        <table className="tbl click">
-          <thead>
-            <tr>
-              <th style={{ paddingLeft: "16px" }}>Account</th>
-              <th>Date</th>
-              <th style={{ textAlign: "right" }}>Price</th>
-              <th>Status</th>
-              <th style={{ textAlign: "right", paddingRight: "16px" }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {orders.map((o) => {
-              // Scrub any upstream-supplier string that might sneak in from
-              // legacy DB rows. User-facing copy only.
-              const scrub = (s: string | null | undefined, fallback: string): string => {
-                if (!s) return fallback;
-                const cleaned = s.replace(/qvsp\s*·\s*/i, "").replace(/qvsp/gi, "").trim();
-                return cleaned || fallback;
-              };
-              const accountName = scrub(o.products?.name, "Random account");
-              const regionLabel = scrub(o.products?.region, "—");
+
+      {/* Order cards */}
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "14px 20px 20px" }}>
+        {shown.length === 0 ? (
+          <p className="mut" style={{ textAlign: "center", marginTop: "30px" }}>Nothing here.</p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "10px" }}>
+            {shown.map((o, i) => {
+              const s = info(o);
+              const region = o.account?.region ?? o.products?.region ?? null;
+              const name = (o.products?.name ?? "Valorant account").replace(/qvsp\s*·\s*/i, "").replace(/qvsp/gi, "").trim() || "Valorant account";
+              const facts = [
+                region ? REGION_NAME[region as Region] ?? region : null,
+                o.account?.skin_count != null ? `${o.account.skin_count} skins` : null,
+                o.account?.peak ? `Peak ${titleCase(o.account.peak.toLowerCase())}` : null,
+              ].filter(Boolean) as string[];
+              const href = `/orders/${o.id}`;
               return (
-              <tr key={o.id} onClick={() => (window.location.href = `/orders/${o.id}`)}>
-                <td style={{ paddingLeft: "16px" }}>
-                  <span style={{ display: "flex", flexDirection: "column" }}>
-                    <span className="bc" style={{ fontWeight: 700, fontSize: "17px", lineHeight: 1.1 }}>
-                      {accountName}
+                <div
+                  key={o.id}
+                  className="cs rise"
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px",
+                    padding: "14px 14px 12px 18px",
+                    background: "var(--vu-surface-alt)",
+                    borderLeft: `4px solid ${PURCHASE_STRIPE[s.tone]}`,
+                    animationDelay: `${Math.min(i, 8) * 30}ms`,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <a href={href} className="bc" style={{ display: "block", fontWeight: 700, fontSize: "20px", lineHeight: 1.1, color: "var(--vu-navy)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {name}
+                      </a>
+                      <span className="mut" style={{ fontSize: "12px" }}>
+                        {facts.length ? facts.join(" · ") : "Account details on the order page"}
+                      </span>
+                    </div>
+                    <span className="h num" style={{ fontSize: "22px", lineHeight: 1 }}>€{eur(o.paid_cents ?? o.price_cents)}</span>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span className={`pill ${s.tone}`}>{s.label}</span>
+                    <span className="mut mono" style={{ fontSize: "11px", marginLeft: "auto" }} title={new Date(o.created_at).toLocaleString()}>
+                      VU-{o.id.slice(0, 8).toUpperCase()} · {purchaseAgo(o.created_at)}
                     </span>
-                    <span className="mut mono" style={{ fontSize: "11px" }}>
-                      VU-{o.id.slice(0, 8).toUpperCase()}{regionLabel && regionLabel !== "—" ? ` · ${regionLabel}` : ""}
-                    </span>
-                  </span>
-                </td>
-                <td className="num mut">
-                  {new Date(o.created_at).toLocaleDateString()}
-                </td>
-                <td className="bc num" style={{ textAlign: "right", fontWeight: 700, fontSize: "18px" }}>
-                  €{eur(o.price_cents)}
-                </td>
-                <td>
-                  <span className={`pill ${orderPillClass(o.status)}`}>
-                    {o.status.replace("_", " ")}
-                  </span>
-                </td>
-                <td style={{ textAlign: "right", paddingRight: "16px" }}>
-                  <a href={`/orders/${o.id}`} className="bc" style={{ fontWeight: 700, color: "inherit" }}>
-                    View →
-                  </a>
-                </td>
-              </tr>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    {o.pay_url ? (
+                      <>
+                        <a href={o.pay_url} className="btn btn-gold cs btn-sm" style={{ flex: 1 }}>Pay now</a>
+                        <a href={href} className="btn btn-soft cs btn-sm">Details</a>
+                      </>
+                    ) : s.group === "delivered" ? (
+                      <a href={href} className="btn btn-dark cs btn-sm" style={{ flex: 1 }}>View login & skins →</a>
+                    ) : (
+                      <a href={href} className="btn btn-soft cs btn-sm" style={{ flex: 1 }}>Open order →</a>
+                    )}
+                  </div>
+                </div>
               );
             })}
-          </tbody>
-        </table>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function orderPillClass(status: string): string {
-  switch (status) {
-    case "delivered": return "g";
-    case "pending":
-    case "awaiting_payment": return "a";
-    case "failed": return "r";
-    case "refunded": return "b";
-    default: return "x";
-  }
-}
 
 // ================================================================
 // X-RAY tab (Ultra-only)

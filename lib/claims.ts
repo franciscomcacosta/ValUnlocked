@@ -280,11 +280,14 @@ export async function syncClaim(claimId: string): Promise<string> {
     return (await deliverReplacement(c, t)) ? "replaced" : "replace_failed";
   }
   if (t.state === "approved") {
-    // qvsp may still be preparing a replacement — give it time before refunding.
-    if (t.replacementOrderId) return "waiting_replacement";
-    const waited = Date.now() - new Date(approvedSeenAt!).getTime();
-    if (waited < REPLACEMENT_WAIT_MS) return "waiting_replacement";
-    return (await refundClaim(c, t.note ?? "Approved by qvsp without a replacement")) ? "refunded" : "noop";
+    // Approved → refund the buyer straight away. Only if qvsp signalled a
+    // replacement order whose login hasn't arrived yet do we wait — and even
+    // then refund after REPLACEMENT_WAIT_MS so nobody is left hanging.
+    if (t.replacementOrderId) {
+      const waited = Date.now() - new Date(approvedSeenAt!).getTime();
+      if (waited < REPLACEMENT_WAIT_MS) return "waiting_replacement";
+    }
+    return (await refundClaim(c, t.note ?? "Approved by qvsp")) ? "refunded" : "noop";
   }
   if (t.state === "denied" || t.state === "closed") {
     const wasApproved = !!prev.approvedSeenAt;

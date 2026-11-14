@@ -200,6 +200,10 @@ export default function OrderDetailPage() {
   const title = data.bracket_label ?? "Valorant account";
   const windowOpen = !!data.claim_window_ends_at && new Date(data.claim_window_ends_at).getTime() > Date.now();
   const hasClaim = (data.claims ?? []).length > 0;
+  // A new report is allowed whenever none is still open (e.g. the
+  // replacement account is dead too) — no limit on how many.
+  const openClaim = (data.claims ?? []).some((c: ClaimSummary) => c.status === "submitted" || c.status === "under_review");
+  const canReport = delivered && !openClaim;
   const visibleSkins = showAllSkins ? skins : skins.slice(0, 12);
 
   const facts: Array<[string, string | null]> = [
@@ -308,8 +312,8 @@ export default function OrderDetailPage() {
             </section>
           )}
 
-          {delivered && !hasClaim && (
-            <AccountCheckPrompt orderId={data.id} windowEndsAt={data.claim_window_ends_at} onReport={() => setReportOpen(true)} />
+          {canReport && (
+            <AccountCheckPrompt key={data.claim_window_ends_at ?? "x"} orderId={data.id} windowEndsAt={data.claim_window_ends_at} onReport={() => setReportOpen(true)} />
           )}
 
           {/* Login details */}
@@ -465,7 +469,7 @@ export default function OrderDetailPage() {
 
           {hasClaim && <ClaimStatusCard claim={data.claims[0]} onOpenOrder={() => window.scrollTo({ top: 0, behavior: "smooth" })} />}
 
-          {delivered && !hasClaim && (
+          {canReport && (
             <button className="btn btn-soft cs" style={{ width: "100%", height: "40px", color: "var(--accent-rose)", fontSize: "16px", whiteSpace: "nowrap" }} onClick={() => setReportOpen(true)}>
               {windowOpen ? <>Report a problem ({<Countdown to={data.claim_window_ends_at!} />})</> : "Report a problem"}
             </button>

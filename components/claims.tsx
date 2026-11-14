@@ -406,7 +406,8 @@ export function AccountCheckPrompt({
   windowEndsAt: string | null;
   onReport: () => void;
 }) {
-  const key = `vu_ok_${orderId}`;
+  // Per delivery: a replacement account gets its own "Is everything OK?".
+  const key = `vu_ok_${orderId}_${windowEndsAt ?? ""}`;
   const [answer, setAnswer] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

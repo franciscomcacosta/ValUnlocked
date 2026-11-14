@@ -15,8 +15,8 @@ import { db } from "@/lib/supabase";
 import { logToStaff } from "@/lib/discord";
 import {
   CLAIM_WINDOW_MS, CLAIM_SUBMIT_GRACE_MS, CLAIM_BONUS_PCT, CLAIM_REASONS,
-  VIDEO_BUCKET, MAX_VIDEO_BYTES, ensureVideoBucket, forwardClaimToQvsp,
-} from "@/lib/claims";
+  VIDEO_BUCKET, MAX_VIDEO_BYTES, ensureVideoBucket, forwardClaimToQvsp, claimWindowStart,
+}  from "@/lib/claims";
 
 const PUBLIC_COLS =
   "id, order_id, reason, details, status, outcome_note, refund_cents, bonus_cents, qvsp_ticket_id, created_at, resolved_at, customer_seen_at";
@@ -83,7 +83,8 @@ export async function POST(req: Request) {
   const owned = await ownedDeliveredOrder(session.uid, orderId);
   if ("error" in owned) return Response.json({ error: owned.error }, { status: owned.error === "not_found" ? 404 : 409 });
   const order = owned.order;
-  const sinceDelivery = Date.now() - new Date(order.fulfilled_at as string).getTime();
+  // Counts from the latest delivery (original or replacement account).
+  const sinceDelivery = Date.now() - (await claimWindowStart(order.id as string, order.fulfilled_at as string));
 
   if (action === "upload-url") {
     if (sinceDelivery > CLAIM_WINDOW_MS) return Response.json({ error: "window_closed" }, { status: 409 });

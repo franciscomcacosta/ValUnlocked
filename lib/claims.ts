@@ -364,3 +364,21 @@ export async function adminResolveClaim(
   await logToStaff(`⛔ Claim ${c.id}: denied by staff${note ? ` (${note})` : ""}.`);
   return { ok: true, message: "Claim denied and the buyer was told." };
 }
+
+
+/** When the 10-minute report window starts for an order: the original
+ *  delivery, or — if qvsp sent a replacement account — when that replacement
+ *  was delivered. So a dead replacement can be reported too; no limit on how
+ *  many times an order can be reported (one open report at a time). */
+export async function claimWindowStart(orderId: string, fulfilledAt: string): Promise<number> {
+  const { data } = await db
+    .from("replacement_claims")
+    .select("resolved_at")
+    .eq("order_id", orderId)
+    .eq("status", "replaced")
+    .not("resolved_at", "is", null)
+    .order("resolved_at", { ascending: false })
+    .limit(1);
+  const replacedAt = data?.[0]?.resolved_at ? new Date(data[0].resolved_at as string).getTime() : 0;
+  return Math.max(new Date(fulfilledAt).getTime(), replacedAt);
+}

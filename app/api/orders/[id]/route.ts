@@ -3,7 +3,7 @@ import { db } from "@/lib/supabase";
 import { decrypt } from "@/lib/crypto";
 import { getSessionUserId } from "@/lib/session";
 import { lookupRank, lookupSkinArt } from "@/lib/valorant-assets";
-import { CLAIM_WINDOW_MS } from "@/lib/claims";
+import { CLAIM_WINDOW_MS, claimWindowStart } from "@/lib/claims";
 
 export const runtime = "nodejs";
 
@@ -102,7 +102,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   );
 
   const fulfilledAt = order.fulfilled_at as string | null;
-  const windowEndsAt = fulfilledAt ? new Date(new Date(fulfilledAt).getTime() + CLAIM_WINDOW_MS).toISOString() : null;
+  const windowEndsAt = fulfilledAt
+    ? new Date((await claimWindowStart(order.id as string, fulfilledAt)) + CLAIM_WINDOW_MS).toISOString()
+    : null;
 
   return Response.json(
     {

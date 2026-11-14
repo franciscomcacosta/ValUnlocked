@@ -241,7 +241,11 @@ async function pass() {
       const row = toRow(item, now);
       const prev = known.get(item.id);
       if (!prev) {
-        upserts.push(resync ? { ...row, public_at: now } : row);
+        // Always set public_at explicitly on NEW rows: in a bulk upsert every
+        // row must carry the same columns, or missing ones become NULL (and
+        // public_at is NOT NULL). Existing rows go in a separate batch below
+        // without public_at so their early-access time isn't touched.
+        upserts.push({ ...row, public_at: resync ? now : new Date(Date.now() + EARLY_ACCESS_MS).toISOString() });
         if (!resync) fresh.push({ region: String(item.region).toUpperCase(), skins: item.skin_count ?? 0 });
         if (!resync) {
           reg.added++;
@@ -260,11 +264,16 @@ async function pass() {
     if (reg.added || reg.removed) byRegion[region.toUpperCase()] = reg;
   }
 
-  // Write the differences.
-  for (let i = 0; i < upserts.length; i += 500) {
-    const chunk = upserts.slice(i, i + 500);
-    const { error } = await db.from("qvsp_stock").upsert(chunk, { onConflict: "qvsp_id" });
-    if (error) throw new Error(`upsert: ${error.message}`);
+  // Write the differences — new rows (with public_at) and changed rows
+  // (without) in SEPARATE batches so every batch has uniform columns.
+  const newRows = upserts.filter((r) => "public_at" in r && r.public_at);
+  const changedRows = upserts.filter((r) => !("public_at" in r && r.public_at));
+  for (const group of [newRows, changedRows]) {
+    for (let i = 0; i < group.length; i += 500) {
+      const chunk = group.slice(i, i + 500);
+      const { error } = await db.from("qvsp_stock").upsert(chunk, { onConflict: "qvsp_id" });
+      if (error) throw new Error(`upsert: ${error.message}`);
+    }
   }
   for (let i = 0; i < removedIds.length; i += 300) {
     const chunk = removedIds.slice(i, i + 300);
@@ -550,6 +559,7 @@ async function beat() {
 // ─── main loop ─────────────────────────────────────────────────────────
 
 let stopping = false;
+let lastReload = Date.now();
 process.on("SIGTERM", () => { stopping = true; });
 process.on("SIGINT", () => { stopping = true; });
 
@@ -561,6 +571,13 @@ async function main() {
     const started = Date.now();
     try {
       await loadSkinTiers();
+      // Re-read our whole mirror every 30 min so rows written by anything
+      // else (the site's backup sync) are also checked and cleaned up.
+      if (Date.now() - lastReload > 30 * 60_000) {
+        known.clear();
+        await loadKnown();
+        lastReload = Date.now();
+      }
       await pass();
       await beat();
       await heartbeat();

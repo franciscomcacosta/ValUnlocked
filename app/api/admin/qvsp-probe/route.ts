@@ -31,5 +31,23 @@ export async function GET(req: Request) {
     })
   );
 
-  return Response.json({ base: BASE, results }, { headers: { "cache-control": "no-store" } });
+  // Stock shape check (read-only): everything EXCEPT the items themselves,
+  // how many items came back, and whether ids stay the same between two
+  // calls a moment apart — to see paging / re-keyed ids.
+  const stock = async (region: string) => {
+    const res = await fetch(`${BASE}/stock?kind=skinned&region=${region}`, { headers: { authorization: `Bearer ${key}` } });
+    const text = await res.text();
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(text); } catch { return { region, status: res.status, raw: text.slice(0, 300) }; }
+    const items = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
+    const meta = Object.fromEntries(Object.entries(body).filter(([k]) => k !== "items"));
+    const headers = Object.fromEntries([...res.headers].filter(([k]) => /link|page|total|cursor|count|limit|next/i.test(k)));
+    return { region, status: res.status, count: items.length, meta, headers, itemKeys: Object.keys(items[0] ?? {}), firstIds: items.slice(0, 3).map((i) => i.id), lastIds: items.slice(-2).map((i) => i.id) };
+  };
+  const eu1 = await stock("eu").catch((e) => ({ error: String(e) }));
+  await new Promise((r) => setTimeout(r, 1500));
+  const eu2 = await stock("eu").catch((e) => ({ error: String(e) }));
+  const ap = await stock("ap").catch((e) => ({ error: String(e) }));
+
+  return Response.json({ base: BASE, stock: { eu_first: eu1, eu_second: eu2, ap }, results }, { headers: { "cache-control": "no-store" } });
 }

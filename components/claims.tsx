@@ -159,7 +159,7 @@ export function ReportProblemModal({
             <span className="mut">Ticket <b className="mono" style={{ color: "#0f1923" }}>{ticket}</b> · {reasonLabel} · video attached</span>
             <span className="mut" style={{ fontSize: "12px" }}>
               If the supplier sends a replacement, it's swapped into this order. Otherwise you get back everything you paid
-              plus a 5% apology bonus as credit. We&apos;ll DM you on Discord when it&apos;s decided.
+              as credit. We&apos;ll DM you on Discord when it&apos;s decided.
             </span>
             <button className="btn btn-dark cs" style={{ width: "100%", marginTop: "6px" }} onClick={onClose}>Done</button>
           </div>
@@ -229,7 +229,7 @@ export function ReportProblemModal({
             <span className="mut" style={{ fontSize: "12px" }}>
               We review your video with the supplier. If they send a replacement, you get that account.{" "}
               {paidCents > 0 ? (
-                <>If not, you get back the full <b style={{ color: "#0f1923" }}>€{eur(paidCents)}</b> you paid plus a <b style={{ color: "#15803d" }}>5% apology bonus</b> as credit.</>
+                <>If not, you get back the full <b style={{ color: "#0f1923" }}>€{eur(paidCents)}</b> you paid as credit.</>
               ) : (
                 <>If not, you get a <b style={{ color: "#15803d" }}>brand-new free account</b> to claim.</>
               )}{" "}
@@ -263,7 +263,9 @@ export function ClaimStatusCard({ claim, onOpenOrder }: { claim: ClaimSummary; o
           <span className="h num" style={{ fontSize: "40px" }}>+€{eur(total)}</span>
           <div style={{ display: "flex", flexDirection: "column", gap: "2px", fontSize: "13px" }}>
             <span style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#9aa5b1" }}>What you paid</span><span className="num">€{eur(claim.refund_cents)}</span></span>
-            <span style={{ display: "flex", justifyContent: "space-between", color: "#ffd400", fontWeight: 600 }}><span>+5% apology bonus</span><span className="num">€{eur(claim.bonus_cents)}</span></span>
+            {claim.bonus_cents > 0 && (
+              <span style={{ display: "flex", justifyContent: "space-between", color: "#ffd400", fontWeight: 600 }}><span>Bonus</span><span className="num">€{eur(claim.bonus_cents)}</span></span>
+            )}
           </div>
           <span style={{ fontSize: "12px", color: "#9aa5b1" }}>Sorry about that one. It&apos;s in your wallet, ready to spend.</span>
         </div>
@@ -310,7 +312,7 @@ export function ClaimStatusCard({ claim, onOpenOrder }: { claim: ClaimSummary; o
       <span style={{ fontSize: "13px" }}>
         Ticket <b className="mono">RF-{claim.id.slice(0, 8).toUpperCase()}</b>. A replacement if the supplier sends one,
         otherwise {claim.refund_cents > 0
-          ? <>€{eur(claim.refund_cents)} back + €{eur(claim.bonus_cents)} apology bonus as credit.</>
+          ? <>€{eur(claim.refund_cents)} back as credit.</>
           : <>a brand-new free account to claim.</>}
       </span>
     </div>
@@ -362,9 +364,11 @@ export function ClaimOutcomeModal({ onCredited }: { onCredited?: () => void }) {
               <span style={{ color: "#cbd5e1" }}>added to your credit</span>
               <div className="cs" style={{ width: "100%", background: "rgba(255,255,255,0.06)", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "4px" }}>
                 <span style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#9aa5b1" }}>What you paid</span><span className="num">€{eur(paid)}</span></span>
-                <span className="rise" style={{ display: "flex", justifyContent: "space-between", color: "#ffd400", fontWeight: 700, animationDelay: "500ms" }}>
-                  <span>+5% apology bonus</span><span className="num">€{eur(bonus)}</span>
-                </span>
+                {bonus > 0 && (
+                  <span className="rise" style={{ display: "flex", justifyContent: "space-between", color: "#ffd400", fontWeight: 700, animationDelay: "500ms" }}>
+                    <span>Bonus</span><span className="num">€{eur(bonus)}</span>
+                  </span>
+                )}
               </div>
               <span style={{ fontSize: "13px", color: "#9aa5b1" }}>Sorry that account didn&apos;t work out. The credit is ready to spend right now.</span>
             </>

@@ -7,7 +7,7 @@
 //   • If qvsp provides a replacement account, the buyer gets THAT account.
 //   • If qvsp approves without a replacement, the buyer is refunded to
 //     credit what THEY paid (credit + crypto, not our qvsp cost) plus a
-//     5% apology bonus.
+//     nothing extra (the old 5% apology bonus was removed).
 //   • Denied → no credit; the buyer is told and can open a Discord ticket.
 import { db } from "./supabase";
 import { encrypt, decrypt } from "./crypto";
@@ -19,7 +19,8 @@ import { replacementReadyMessage, claimRefundMessage, giftReissuedMessage, claim
 
 export const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 export const CLAIM_SUBMIT_GRACE_MS = 10 * 60 * 1000;   // upload may finish after the window
-export const CLAIM_BONUS_PCT = 0.05;
+// No apology bonus on refunds (was 5%) — buyers get back exactly what they paid.
+export const CLAIM_BONUS_PCT = 0;
 export const VIDEO_BUCKET = "claim-videos";
 export const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
 // Approved but no replacement attached yet: wait this long for qvsp to add
@@ -241,6 +242,11 @@ async function isGiftOrder(orderId: string): Promise<boolean> {
 
 async function refundClaim(c: ClaimRow, note: string): Promise<boolean> {
   if (c.refund_cents === 0 && (await isGiftOrder(c.order_id))) return reissueGift(c, note);
+  // Older open reports were saved with a 5% bonus — refund only what was paid.
+  if (c.bonus_cents) {
+    await db.from("replacement_claims").update({ bonus_cents: 0 }).eq("id", c.id).in("status", ["submitted", "under_review"]);
+    c = { ...c, bonus_cents: 0 };
+  }
   const { data: credited } = await db.rpc("apply_claim_refund", { p_claim: c.id, p_note: note });
   if (!credited) return false;
   const { data: bal } = await db.from("users").select("credit_cents").eq("id", c.user_id).maybeSingle();
@@ -255,7 +261,7 @@ async function refundClaim(c: ClaimRow, note: string): Promise<boolean> {
       note,
     })
   );
-  await logToStaff(`💸 Claim ${c.id}: refunded ${euro(c.refund_cents)} + ${euro(c.bonus_cents)} bonus to credit.`);
+  await logToStaff(`💸 Claim ${c.id}: refunded ${euro(c.refund_cents)} to credit.`);
   return true;
 }
 
@@ -353,7 +359,7 @@ export async function adminResolveClaim(
   if (action === "refund") {
     const done = await refundClaim(c, note || "Refunded by staff");
     return done
-      ? { ok: true, message: c.refund_cents === 0 ? "Free account re-issued." : `Refunded ${euro(c.refund_cents)} + ${euro(c.bonus_cents)} bonus.` }
+      ? { ok: true, message: c.refund_cents === 0 ? "Free account re-issued." : `Refunded ${euro(c.refund_cents)}.` }
       : { ok: false, message: "Refund didn't go through — the claim may have just changed. Reload." };
   }
   const { data: upd } = await db

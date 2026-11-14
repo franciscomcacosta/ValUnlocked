@@ -245,7 +245,7 @@ export function replacementReadyMessage(o: {
   });
 }
 
-/** Claim approved → refunded to credit + apology bonus. */
+/** Claim approved → refunded to credit (what they paid). */
 export function claimRefundMessage(o: {
   orderId: string;
   refundCents: number;
@@ -258,9 +258,7 @@ export function claimRefundMessage(o: {
     title: "💛 Report approved — you've been refunded",
     color: COLOR.ok,
     fields: [
-      { name: "Refunded", value: eur(o.refundCents), inline: true },
-      { name: "Apology bonus", value: `+${eur(o.bonusCents)}`, inline: true },
-      { name: "Total credit", value: `**${eur(o.refundCents + o.bonusCents)}**`, inline: true },
+      { name: "Refunded", value: `**${eur(o.refundCents + o.bonusCents)}**`, inline: true },
       o.balanceCents != null ? { name: "Your new balance", value: eur(o.balanceCents), inline: true } : null,
       o.reasonLabel ? { name: "Your report", value: o.reasonLabel } : null,
       o.note ? { name: "Decision", value: o.note } : null,

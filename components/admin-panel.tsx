@@ -710,7 +710,7 @@ function ClaimCard({ c, onChanged }: { c: ClaimRow; onChanged: () => void }) {
       </div>
       <span style={{ fontSize: "14px" }}>{c.reason_label}</span>
       <span className="mut" style={{ fontSize: "13px" }}>
-        Refund if approved: {eur(c.refund_cents)} + {eur(c.bonus_cents)} bonus
+        Refund if approved: {eur(c.refund_cents)}
         {c.video_url && <> · <a href={c.video_url} target="_blank" rel="noreferrer">Watch video</a></>}
       </span>
       {c.forward_error && (

@@ -79,7 +79,7 @@ function useAction() {
 
 // ----- shell -----------------------------------------------------
 
-type Sub = "overview" | "users" | "orders" | "claims" | "emails" | "referrals" | "tools";
+type Sub = "overview" | "users" | "orders" | "claims" | "emails" | "broadcast" | "referrals" | "tools";
 
 export function AdminPanel({ tools }: { tools: ReactNode }) {
   const [sub, setSub] = useState<Sub>("overview");
@@ -90,7 +90,7 @@ export function AdminPanel({ tools }: { tools: ReactNode }) {
       <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
         <span className="lbl" style={{ flex: 1 }}>Admin</span>
         <div className="seg" role="group" aria-label="Admin section">
-          {(["overview", "users", "orders", "claims", "emails", "referrals", "tools"] as Sub[]).map((k) => (
+          {(["overview", "users", "orders", "claims", "emails", "broadcast", "referrals", "tools"] as Sub[]).map((k) => (
             <button key={k} className={sub === k ? "on" : ""} onClick={() => setSub(k)}>
               {k[0].toUpperCase() + k.slice(1)}
             </button>
@@ -109,6 +109,7 @@ export function AdminPanel({ tools }: { tools: ReactNode }) {
         {sub === "orders" && <Orders filter={orderFilter} setFilter={setOrderFilter} />}
         {sub === "claims" && <Claims />}
         {sub === "emails" && <Emails />}
+        {sub === "broadcast" && <Broadcast />}
         {sub === "referrals" && <Referrals />}
         {sub === "tools" && tools}
       </div>
@@ -710,7 +711,7 @@ function ClaimCard({ c, onChanged }: { c: ClaimRow; onChanged: () => void }) {
       </div>
       <span style={{ fontSize: "14px" }}>{c.reason_label}</span>
       <span className="mut" style={{ fontSize: "13px" }}>
-        Refund if approved: {eur(c.refund_cents)}
+        Refund if approved: {eur(c.refund_cents)} + {eur(c.bonus_cents)} bonus
         {c.video_url && <> · <a href={c.video_url} target="_blank" rel="noreferrer">Watch video</a></>}
       </span>
       {c.forward_error && (
@@ -883,5 +884,160 @@ function EmailRow({ r, onSaved }: { r: MissingEmail; onSaved: () => void }) {
       </div>
       <Note msg={act.msg} />
     </Card>
+  );
+}
+
+// ----- Broadcast -------------------------------------------------
+// DM an announcement to members. Always send yourself a test first.
+
+const GIVEAWAY_TITLE = "🎁 5,000 VP GIVEAWAY — members only";
+const GIVEAWAY_BODY = [
+  "Hey! As a **Val Unlocked member** you're in on our **5,000 VP giveaway** 🎉",
+  "",
+  "**How to enter**",
+  "**1.** Invite **5 friends** to our Discord server",
+  "**2.** They have to **join and stay** in the server",
+  "**3.** That's it — you're entered!",
+  "",
+  "Use **your own invite link** so we can count it: right-click the server icon → **Invite People** → copy your link.",
+  "",
+  "🏆 **Prize:** 5,000 VP",
+  "📅 **Winner announced:** Sunday 23 November",
+  "",
+  "Good luck! 🍀",
+].join("\n");
+
+/** Tiny preview of Discord markdown: **bold**, line breaks. */
+function DiscordText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split("\n").map((line, i) => (
+        <div key={i} style={{ minHeight: "1.3em" }}>
+          {line.split(/(\*\*[^*]+\*\*)/g).map((part, j) =>
+            part.startsWith("**") && part.endsWith("**") ? <b key={j}>{part.slice(2, -2)}</b> : <span key={j}>{part}</span>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function Broadcast() {
+  const [audience, setAudience] = useState("members");
+  const [title, setTitle] = useState(GIVEAWAY_TITLE);
+  const [body, setBody] = useState(GIVEAWAY_BODY);
+  const [buttonLabel, setButtonLabel] = useState("");
+  const [buttonUrl, setButtonUrl] = useState("");
+  const [count, setCount] = useState<number | null>(null);
+  const [tested, setTested] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [progress, setProgress] = useState<{ sent: number; failed: number; total: number; done: boolean } | null>(null);
+  const test = useAction();
+  const [sendErr, setSendErr] = useState("");
+
+  useEffect(() => {
+    setCount(null);
+    api<{ total: number }>("/api/admin/broadcast", { action: "count", audience }).then((r) => setCount(r.total ?? 0));
+  }, [audience]);
+  // Any edit means the test you saw is out of date.
+  useEffect(() => { setTested(false); setConfirming(false); }, [title, body, buttonLabel, buttonUrl]);
+
+  const payload = { audience, title, body, buttonLabel: buttonLabel || undefined, buttonUrl: buttonUrl || undefined };
+  const sending = !!progress && !progress.done;
+
+  async function sendAll() {
+    if (!confirming) {
+      setConfirming(true);
+      setTimeout(() => setConfirming(false), 6000);
+      return;
+    }
+    setConfirming(false);
+    setSendErr("");
+    let offset: number | null = 0;
+    let sent = 0;
+    let failed = 0;
+    let total = count ?? 0;
+    setProgress({ sent, failed, total, done: false });
+    while (offset !== null) {
+      const r: { sent?: number; failed?: number; nextOffset?: number | null; total?: number; error?: string } =
+        await api("/api/admin/broadcast", { ...payload, action: "send", offset });
+      if (r.error) {
+        setSendErr(`Stopped: ${r.error}`);
+        break;
+      }
+      sent += r.sent ?? 0;
+      failed += r.failed ?? 0;
+      total = r.total ?? total;
+      offset = r.nextOffset ?? null;
+      setProgress({ sent, failed, total, done: offset === null });
+    }
+    setProgress((p) => (p ? { ...p, done: true } : p));
+  }
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "14px", alignItems: "start" }}>
+      <Card>
+        <span className="h" style={{ fontSize: "20px" }}>Write the DM</span>
+        <label className="lbl" style={{ fontSize: "11px" }}>Send to</label>
+        <select className="inp" value={audience} onChange={(e) => setAudience(e.target.value)} disabled={sending}>
+          <option value="members">All members (any active plan)</option>
+          <option value="ultra">Ultra members</option>
+          <option value="premium">Premium members</option>
+          <option value="standard">Standard members</option>
+          <option value="everyone">Everyone who ever signed in</option>
+        </select>
+        <span className="mut" style={{ fontSize: "12px" }}>{count === null ? "Counting…" : `${count} ${count === 1 ? "person" : "people"}`}</span>
+
+        <label className="lbl" style={{ fontSize: "11px" }}>Title</label>
+        <input className="inp" value={title} maxLength={256} onChange={(e) => setTitle(e.target.value)} disabled={sending} />
+        <label className="lbl" style={{ fontSize: "11px" }}>Message · **bold** works</label>
+        <textarea className="inp" rows={14} maxLength={3500} value={body} onChange={(e) => setBody(e.target.value)} disabled={sending}
+          style={{ height: "auto", paddingTop: "8px", resize: "vertical", fontFamily: "var(--font-body)" }} />
+        <div style={{ display: "flex", gap: "6px" }}>
+          <input className="inp" placeholder="Button text (optional)" value={buttonLabel} onChange={(e) => setButtonLabel(e.target.value)} disabled={sending} style={{ flex: 1 }} />
+          <input className="inp" placeholder="https://… (optional)" value={buttonUrl} onChange={(e) => setButtonUrl(e.target.value)} disabled={sending} style={{ flex: 1.4 }} />
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "4px" }}>
+          <button className="btn btn-dark cs btn-sm" disabled={test.busy || sending} onClick={() => test.run("/api/admin/broadcast", { ...payload, action: "test" }, () => setTested(true))}>
+            {test.busy ? "Sending…" : "1 · Send test to me"}
+          </button>
+          <button
+            className={`btn ${confirming ? "btn-gold" : "btn-red"} cs btn-sm`}
+            disabled={!tested || sending || !count}
+            title={tested ? undefined : "Send yourself a test first"}
+            onClick={sendAll}
+          >
+            {confirming ? `Click again to send to ${count}` : `2 · Send to ${count ?? "…"} ${count === 1 ? "person" : "people"}`}
+          </button>
+        </div>
+        <Note msg={test.msg} />
+        {!tested && <span className="mut" style={{ fontSize: "12px" }}>Send yourself a test first — the real send unlocks after that (and locks again if you edit).</span>}
+        {progress && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div style={{ height: "6px", background: "var(--vu-divider-strong)" }}>
+              <div style={{ height: "100%", width: `${progress.total ? ((progress.sent + progress.failed) / progress.total) * 100 : 100}%`, background: "var(--accent-success)", transition: "width .3s" }} />
+            </div>
+            <span style={{ fontSize: "13px" }}>
+              {progress.done ? "✅ Done — " : "Sending… "}
+              {progress.sent} sent{progress.failed ? ` · ${progress.failed} couldn't be DMed (DMs closed or left the server)` : ""} · {progress.total} total
+            </span>
+          </div>
+        )}
+        {sendErr && <span style={{ fontSize: "13px", color: "var(--accent-rose)" }}>{sendErr}</span>}
+      </Card>
+
+      <Card style={{ background: "#313338", color: "#dbdee1" }}>
+        <span className="lbl" style={{ color: "#949ba4" }}>Preview (roughly how it looks in Discord)</span>
+        <div style={{ borderLeft: "4px solid #ffd400", background: "#2b2d31", padding: "10px 14px", fontSize: "14px", lineHeight: 1.4, borderRadius: "4px" }}>
+          <div style={{ fontWeight: 700, color: "#fff", marginBottom: "6px", fontSize: "15px" }}>{title || "Title"}</div>
+          <DiscordText text={body} />
+          <div style={{ fontSize: "11px", color: "#949ba4", marginTop: "8px" }}>Val Unlocked · today</div>
+        </div>
+        {buttonLabel && buttonUrl && (
+          <span style={{ alignSelf: "flex-start", background: "#4e5058", color: "#fff", padding: "6px 14px", borderRadius: "3px", fontSize: "14px" }}>{buttonLabel} ↗</span>
+        )}
+      </Card>
+    </div>
   );
 }

@@ -245,7 +245,7 @@ export function replacementReadyMessage(o: {
   });
 }
 
-/** Claim approved → refunded to credit (what they paid). */
+/** Claim approved → refunded to credit + apology bonus. */
 export function claimRefundMessage(o: {
   orderId: string;
   refundCents: number;
@@ -258,7 +258,9 @@ export function claimRefundMessage(o: {
     title: "💛 Report approved — you've been refunded",
     color: COLOR.ok,
     fields: [
-      { name: "Refunded", value: `**${eur(o.refundCents + o.bonusCents)}**`, inline: true },
+      { name: "Refunded", value: eur(o.refundCents), inline: true },
+      { name: "Apology bonus", value: `+${eur(o.bonusCents)}`, inline: true },
+      { name: "Total credit", value: `**${eur(o.refundCents + o.bonusCents)}**`, inline: true },
       o.balanceCents != null ? { name: "Your new balance", value: eur(o.balanceCents), inline: true } : null,
       o.reasonLabel ? { name: "Your report", value: o.reasonLabel } : null,
       o.note ? { name: "Decision", value: o.note } : null,
@@ -472,4 +474,12 @@ export function vouchRequestMessage(o: { orderId: string; summary: string }): Di
 export function accountSummary(region: string | null | undefined, skins: number | null | undefined, fallback = "Your account"): string {
   if (!region) return fallback;
   return `${REGION[region.toUpperCase()] ?? region}${skins != null ? ` · ${skins} skins` : ""}`;
+}
+
+// ─── broadcasts ──────────────────────────────────────────────────────
+
+/** Announcement DM written in the admin panel (Broadcast). */
+export function broadcastMessage(o: { title: string; body: string; buttonLabel?: string | null; buttonUrl?: string | null }): DiscordMessage {
+  const btn = o.buttonLabel && o.buttonUrl && /^https:\/\//.test(o.buttonUrl) ? [{ label: o.buttonLabel.slice(0, 80), url: o.buttonUrl }] : [];
+  return card({ title: o.title.slice(0, 256), color: COLOR.gold, description: o.body, buttons: btn });
 }

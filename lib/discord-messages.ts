@@ -52,6 +52,7 @@ function card(o: {
   fields?: Array<Field | null | false | undefined>;
   orderId?: string;
   buttons?: Button[];
+  image?: string | null;
 }): DiscordMessage {
   const fields = (o.fields ?? []).filter((f): f is Field => !!f && !!f.value).map((f) => ({ ...f, value: clip(f.value) }));
   const btns = (o.buttons ?? []).slice(0, 5);
@@ -62,6 +63,7 @@ function card(o: {
         color: o.color,
         ...(o.description ? { description: clip(o.description, 3500) } : {}),
         ...(fields.length ? { fields } : {}),
+        ...(o.image ? { image: { url: o.image } } : {}),
         footer: { text: o.orderId ? `Val Unlocked · Order ${orderRef(o.orderId)}` : "Val Unlocked" },
         timestamp: new Date().toISOString(),
       },
@@ -479,7 +481,14 @@ export function accountSummary(region: string | null | undefined, skins: number 
 // ─── broadcasts ──────────────────────────────────────────────────────
 
 /** Announcement DM written in the admin panel (Broadcast). */
-export function broadcastMessage(o: { title: string; body: string; buttonLabel?: string | null; buttonUrl?: string | null }): DiscordMessage {
+export function broadcastMessage(o: {
+  title: string;
+  body: string;
+  buttonLabel?: string | null;
+  buttonUrl?: string | null;
+  imageUrl?: string | null;   // big banner under the text (must be a public https link)
+}): DiscordMessage {
   const btn = o.buttonLabel && o.buttonUrl && /^https:\/\//.test(o.buttonUrl) ? [{ label: o.buttonLabel.slice(0, 80), url: o.buttonUrl }] : [];
-  return card({ title: o.title.slice(0, 256), color: COLOR.gold, description: o.body, buttons: btn });
+  const image = o.imageUrl && /^https:\/\//.test(o.imageUrl) ? o.imageUrl : null;
+  return card({ title: o.title.slice(0, 256), color: COLOR.gold, description: o.body, buttons: btn, image });
 }

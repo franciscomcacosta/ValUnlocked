@@ -62,6 +62,8 @@ export const config = {
   // Keep in mind: matcher runs middleware; the PUBLIC_API_PATHS check above
   // handles the API-level exceptions.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    // Images in /public (e.g. DM banners) must load without a login so
+    // Discord can show them in embeds.
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:png|jpe?g|gif|webp|svg)$).*)",
   ],
 };

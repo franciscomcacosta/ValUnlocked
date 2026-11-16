@@ -891,6 +891,7 @@ function EmailRow({ r, onSaved }: { r: MissingEmail; onSaved: () => void }) {
 // DM an announcement to members. Always send yourself a test first.
 
 const GIVEAWAY_TITLE = "🎁 5,000 VP GIVEAWAY — members only";
+const GIVEAWAY_IMAGE = "https://valunlock.online/giveaway-5k-vp.jpg";
 const GIVEAWAY_BODY = [
   "Hey! As a **Val Unlocked member** you're in on our **5,000 VP giveaway** 🎉",
   "",
@@ -928,6 +929,7 @@ function Broadcast() {
   const [body, setBody] = useState(GIVEAWAY_BODY);
   const [buttonLabel, setButtonLabel] = useState("");
   const [buttonUrl, setButtonUrl] = useState("");
+  const [imageUrl, setImageUrl] = useState(GIVEAWAY_IMAGE);
   const [count, setCount] = useState<number | null>(null);
   const [tested, setTested] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -940,9 +942,9 @@ function Broadcast() {
     api<{ total: number }>("/api/admin/broadcast", { action: "count", audience }).then((r) => setCount(r.total ?? 0));
   }, [audience]);
   // Any edit means the test you saw is out of date.
-  useEffect(() => { setTested(false); setConfirming(false); }, [title, body, buttonLabel, buttonUrl]);
+  useEffect(() => { setTested(false); setConfirming(false); }, [title, body, buttonLabel, buttonUrl, imageUrl]);
 
-  const payload = { audience, title, body, buttonLabel: buttonLabel || undefined, buttonUrl: buttonUrl || undefined };
+  const payload = { audience, title, body, buttonLabel: buttonLabel || undefined, buttonUrl: buttonUrl || undefined, imageUrl: imageUrl || undefined };
   const sending = !!progress && !progress.done;
 
   async function sendAll() {
@@ -993,6 +995,8 @@ function Broadcast() {
         <label className="lbl" style={{ fontSize: "11px" }}>Message · **bold** works</label>
         <textarea className="inp" rows={14} maxLength={3500} value={body} onChange={(e) => setBody(e.target.value)} disabled={sending}
           style={{ height: "auto", paddingTop: "8px", resize: "vertical", fontFamily: "var(--font-body)" }} />
+        <label className="lbl" style={{ fontSize: "11px" }}>Banner image link (optional)</label>
+        <input className="inp" placeholder="https://valunlock.online/your-image.jpg" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} disabled={sending} />
         <div style={{ display: "flex", gap: "6px" }}>
           <input className="inp" placeholder="Button text (optional)" value={buttonLabel} onChange={(e) => setButtonLabel(e.target.value)} disabled={sending} style={{ flex: 1 }} />
           <input className="inp" placeholder="https://… (optional)" value={buttonUrl} onChange={(e) => setButtonUrl(e.target.value)} disabled={sending} style={{ flex: 1.4 }} />
@@ -1032,6 +1036,7 @@ function Broadcast() {
         <div style={{ borderLeft: "4px solid #ffd400", background: "#2b2d31", padding: "10px 14px", fontSize: "14px", lineHeight: 1.4, borderRadius: "4px" }}>
           <div style={{ fontWeight: 700, color: "#fff", marginBottom: "6px", fontSize: "15px" }}>{title || "Title"}</div>
           <DiscordText text={body} />
+          {imageUrl && <img src={imageUrl} alt="" style={{ display: "block", width: "100%", marginTop: "10px", borderRadius: "4px" }} />}
           <div style={{ fontSize: "11px", color: "#949ba4", marginTop: "8px" }}>Val Unlocked · today</div>
         </div>
         {buttonLabel && buttonUrl && (

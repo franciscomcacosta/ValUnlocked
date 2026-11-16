@@ -48,7 +48,7 @@ export async function POST(req: Request) {
   if (auth instanceof Response) return auth;
   const b = (await req.json().catch(() => ({}))) as {
     action?: string; audience?: string; title?: string; body?: string;
-    buttonLabel?: string; buttonUrl?: string; offset?: number;
+    buttonLabel?: string; buttonUrl?: string; imageUrl?: string; offset?: number;
   };
   const audience = (AUDIENCES as readonly string[]).includes(b.audience ?? "") ? (b.audience as Audience) : "members";
 
@@ -62,7 +62,8 @@ export async function POST(req: Request) {
   if (title.length > 256) return Response.json({ error: "Title is too long (max 256)." }, { status: 400 });
   if (body.length > 3500) return Response.json({ error: "Message is too long (max 3500)." }, { status: 400 });
   if (b.buttonUrl && !/^https:\/\//.test(b.buttonUrl)) return Response.json({ error: "Button link must start with https://" }, { status: 400 });
-  const msg = broadcastMessage({ title, body, buttonLabel: b.buttonLabel, buttonUrl: b.buttonUrl });
+  if (b.imageUrl && !/^https:\/\//.test(b.imageUrl)) return Response.json({ error: "Image link must start with https://" }, { status: 400 });
+  const msg = broadcastMessage({ title, body, buttonLabel: b.buttonLabel, buttonUrl: b.buttonUrl, imageUrl: b.imageUrl });
 
   if (b.action === "test") {
     try {

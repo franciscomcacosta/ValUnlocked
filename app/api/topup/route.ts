@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 import { sessionFromRequest } from "@/lib/session";
 import { db } from "@/lib/supabase";
-import { createInvoice } from "@/lib/nowpayments";
+import { createInvoice } from "@/lib/payments";
 import { TOPUP_TIERS, TOPUP_BONUS_PCT, topupTier } from "@/lib/pricing";
 
 const isMissingTable = (msg?: string) => !!msg && /topup_invoices/.test(msg) && /exist|schema cache|relation/i.test(msg);

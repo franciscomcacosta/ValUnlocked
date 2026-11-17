@@ -18,7 +18,7 @@ import {
   type SubTier,
   type FeaturedSkin,
 } from "@/lib/pricing";
-import { createInvoice } from "@/lib/nowpayments";
+import { createInvoice } from "@/lib/payments";
 import { fulfilOrder } from "@/lib/fulfil";
 import { getSalesPause, getCachedBalance, PAUSED_MESSAGE } from "@/lib/shop-flags";
 

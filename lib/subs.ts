@@ -8,7 +8,7 @@
 // Reminders go out at T-7, T-3, T-1 days, all linking to the same (reusable)
 // invoice URL so inboxes don't fill up with new links.
 import { db } from "./supabase";
-import { createInvoice } from "./nowpayments";
+import { createInvoice, invoiceLink } from "./payments";
 import { welcomeStatus } from "./welcome-account";
 import { notifyDiscordUser, setTierRole, clearTierRoles, logToStaff } from "./discord";
 import { subActiveMessage, welcomeAccountMessage, subGraceMessage, subEndedMessage, subReminderMessage } from "./discord-messages";
@@ -158,7 +158,7 @@ export async function createRenewalInvoice(subscriptionId: string): Promise<{ ok
     .maybeSingle();
 
   if (existing?.np_invoice_id) {
-    return { ok: true, invoiceUrl: `https://nowpayments.io/payment/?iid=${existing.np_invoice_id}` };
+    return { ok: true, invoiceUrl: invoiceLink(existing.np_invoice_id) };
   }
 
   const amount = SUB_PRICE_CENTS[typed.tier];

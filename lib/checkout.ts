@@ -1,5 +1,5 @@
 import { db } from "./supabase";
-import { createInvoice } from "./nowpayments";
+import { createInvoice } from "./payments";
 import { fulfilOrder } from "./fulfil";
 
 export type CheckoutResult =

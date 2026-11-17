@@ -4,6 +4,7 @@ import { decrypt } from "@/lib/crypto";
 import { getSessionUserId } from "@/lib/session";
 import { lookupRank, lookupSkinArt } from "@/lib/valorant-assets";
 import { CLAIM_WINDOW_MS, claimWindowStart } from "@/lib/claims";
+import { invoiceLink } from "@/lib/payments";
 
 export const runtime = "nodejs";
 
@@ -149,7 +150,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       // Unpaid orders: where to finish paying, and when the hold runs out.
       pay_url:
         ["pending", "waiting"].includes(order.status as string) && order.np_invoice_id
-          ? `https://nowpayments.io/payment/?iid=${order.np_invoice_id}`
+          ? invoiceLink(order.np_invoice_id as string)
           : null,
       hold_ends_at: ["pending", "waiting"].includes(order.status as string)
         ? new Date(new Date(order.created_at as string).getTime() + 3 * 3_600_000).toISOString()

@@ -384,7 +384,7 @@ export function subReminderMessage(o: { tier: SubTier; which: "7d" | "3d" | "1d"
   return card({
     title,
     color: o.which === "1d" ? COLOR.warn : TIER_COLOR[o.tier],
-    description: "Keep your discount and perks — renew with crypto in one click.",
+    description: "Keep your discount and perks — renew in one click.",
     fields: [{ name: "Ends", value: `<t:${ts(o.end)}:D> (<t:${ts(o.end)}:R>)` }],
     buttons: [{ label: "Renew now", url: o.invoiceUrl }],
   });

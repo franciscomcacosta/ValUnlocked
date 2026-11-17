@@ -190,7 +190,7 @@ export async function runOps(): Promise<Record<string, string>> {
   const steps: Array<[string, () => Promise<string>]> = [
     ["balance", checkBalance],
     ["watcher", checkWatcher],
-    ["unpaid", remindUnpaid],
+    // unpaid reminder disabled: orders are only held for 5 minutes
     ["vouches", askVouches],
   ];
   const out: Record<string, string> = {};

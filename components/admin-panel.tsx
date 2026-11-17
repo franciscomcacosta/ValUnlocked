@@ -220,7 +220,7 @@ function Overview({ goClaims, goStuck, goEmails }: { goClaims: () => void; goStu
         {d.profit && <Stat label="Profit all time" value={eur(d.profit.all)} sub="Paid by buyers − qvsp cost" />}
         {d.membershipMonthCents !== undefined && <Stat label="Memberships 30d" value={eur(d.membershipMonthCents)} sub="Plan payments (pure profit)" />}
         <Stat label="Revenue 30d" value={eur(d.revenue.month)} sub={`All time ${eur(d.revenue.all)}`} />
-        <Stat label="Top-ups 30d" value={eur(d.topupsMonthCents)} sub="Credit bought with crypto" />
+        <Stat label="Top-ups 30d" value={eur(d.topupsMonthCents)} sub="Credit bought" />
         <Stat label="Orders 24h" value={d.orders.day} sub={`${d.orders.fulfilled} delivered · ${d.orders.total} total`} />
         <Stat label="Members" value={d.subs.total} sub={`Std ${d.subs.tiers.standard ?? 0} · Prem ${d.subs.tiers.premium ?? 0} · Ultra ${d.subs.tiers.ultra ?? 0}`} />
         <Stat label="Users" value={d.users.total} sub={`+${d.users.newWeek} this week`} />

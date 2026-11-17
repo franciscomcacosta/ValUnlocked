@@ -153,7 +153,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           ? invoiceLink(order.np_invoice_id as string)
           : null,
       hold_ends_at: ["pending", "waiting"].includes(order.status as string)
-        ? new Date(new Date(order.created_at as string).getTime() + 3 * 3_600_000).toISOString()
+        ? new Date(new Date(order.created_at as string).getTime() + 5 * 60_000).toISOString()
         : null,
     },
     { headers: { "cache-control": "no-store" } }

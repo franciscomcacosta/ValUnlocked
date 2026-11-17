@@ -1223,7 +1223,7 @@ function StockTab({ me }: { me: Me }) {
                   {dueCents > 0 ? (
                     <>
                       {" · "}
-                      <b className="num">€{eur(dueCents)}</b> left via crypto
+                      <b className="num">€{eur(dueCents)}</b> left to pay by card
                     </>
                   ) : (
                     <> — nothing left to pay</>
@@ -3377,7 +3377,7 @@ function TopupModal({
 
   const statusCopy: Record<string, { t: string; d: string; c: string }> = {
     credited: { t: "Credit added", d: "Your wallet has been topped up.", c: "#4ade80" },
-    waiting: { t: "Waiting for payment", d: "Finish paying on the NowPayments page. This updates on its own.", c: "#ffd400" },
+    waiting: { t: "Waiting for payment", d: "Finish paying on the checkout page. This updates on its own.", c: "#ffd400" },
     confirming: { t: "Confirming on-chain", d: "Payment seen. Credit lands once the network confirms it.", c: "#ffd400" },
     confirmed: { t: "Confirming on-chain", d: "Almost there — credit lands in a moment.", c: "#ffd400" },
     sending: { t: "Confirming on-chain", d: "Almost there — credit lands in a moment.", c: "#ffd400" },
@@ -3476,10 +3476,10 @@ function TopupModal({
               {err && <div className="rise" style={{ background: "#ffe4e6", color: "var(--accent-rose)", fontSize: "13px", padding: "8px 10px" }}>{err}</div>}
 
               <button className="btn btn-gold cut btn-lg" onClick={pay} disabled={!tier || busy}>
-                {busy ? "Opening payment…" : tier ? `Pay €${eur(tier.payCents)} with crypto` : "Pay"}
+                {busy ? "Opening payment…" : tier ? `Pay €${eur(tier.payCents)} by card` : "Pay"}
               </button>
               <span className="mut" style={{ fontSize: "12px", textAlign: "center" }}>
-                Paid through NowPayments in the coin you choose. Credit lands automatically once the payment confirms.
+                Paid by card on a secure checkout. Credit lands automatically once the payment confirms.
               </span>
             </>
           )}

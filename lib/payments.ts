@@ -1,14 +1,12 @@
-// Single entry point for creating a payment. PAYMENT_PROVIDER=norpo switches new
-// payments to Norpo; anything else (default) keeps using NOWPayments, so nothing
-// changes until the env var is flipped. Callers keep their existing shape:
-// { id, invoice_url } — `id` is stored in np_invoice_id.
-import { createInvoice as createNowInvoice, type InvoiceResult } from "./nowpayments";
+// Single entry point for creating a payment. New payments always go through
+// Norpo (card checkout, settles as USDC). NOWPayments is no longer offered:
+// lib/nowpayments.ts and /api/ipn stay only so invoices that were already
+// issued can still be verified and delivered, and old pay links keep working.
 import { createNorpoPayment } from "./norpo";
 
-export type { InvoiceResult };
-
-export function paymentProvider(): "norpo" | "nowpayments" {
-  return process.env.PAYMENT_PROVIDER === "norpo" ? "norpo" : "nowpayments";
+export interface InvoiceResult {
+  id: string;
+  invoice_url: string;
 }
 
 export async function createInvoice(opts: {
@@ -18,12 +16,11 @@ export async function createInvoice(opts: {
   description: string;
   successPath?: string;
 }): Promise<InvoiceResult> {
-  if (paymentProvider() === "norpo") return createNorpoPayment(opts);
-  return createNowInvoice(opts);
+  return createNorpoPayment(opts);
 }
 
 // Pay link for an existing invoice id. Norpo ids carry a "norpo:" prefix, so
-// old NOWPayments orders keep their old link after the switch.
+// older NOWPayments orders keep their old link.
 export function invoiceLink(id: string): string {
   if (id.startsWith("norpo:")) return `https://api.norpo.io/return/p/${id.slice("norpo:".length)}`;
   return `https://nowpayments.io/payment/?iid=${id}`;

@@ -11,7 +11,7 @@ type Job = { path: string; everyMin: number; offsetSec: number };
 const JOBS: Job[] = [
   { path: "/api/cron/ops", everyMin: 1, offsetSec: 5 },      // balance, watcher health, reminders, vouches
   { path: "/api/cron/claims", everyMin: 5, offsetSec: 20 },  // qvsp ticket sync + stuck-order retries
-  { path: "/api/cron/expire", everyMin: 10, offsetSec: 35 }, // release unpaid orders after 3 h
+  { path: "/api/cron/expire", everyMin: 1, offsetSec: 35 },  // release unpaid orders after 5 min
   { path: "/api/cron/subs", everyMin: 30, offsetSec: 50 },   // renewal reminders, grace, expiry
 ];
 
